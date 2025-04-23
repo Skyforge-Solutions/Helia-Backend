@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+python-dotenv
+asyncpg
+langchain
+langchain_openai
+psycopg2-binary
+pydantic
+requests
+greenlet
+passlib
+python-jose
+pydantic[email]
+python-multipart
