@@ -1,10 +1,17 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+import sys
+import os
+
+# Add parent directory to path to fix imports when running directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Now we can import from app
 from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
 from app.db.session import init_db
-import uvicorn
 
 
 @asynccontextmanager
@@ -13,8 +20,6 @@ async def lifespan(app: FastAPI):
     await init_db()
     yield
    
-
-
 app = FastAPI(lifespan=lifespan)
 
 # CORS
