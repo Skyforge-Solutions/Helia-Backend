@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from uuid import uuid4
 
-from app.schemas.chat import ChatRequest, ChatMessageResponse
+from app.schemas.chat import ChatRequest
 from app.schemas.models import ChatSessionSchema, ChatMessageSchema, UserSchema
 from app.db.crud import (
     get_or_create_session,
