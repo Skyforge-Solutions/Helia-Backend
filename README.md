@@ -1,5 +1,3 @@
-# Updated README.md with detailed documentation about the backend, containerization, and CI/CD setup.
-
 # HeliaChat Backend Documentation
 
 ## Project Overview
