@@ -45,6 +45,14 @@ class Token(BaseModel):
     access_token: str
     token_type: str
 
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_name: str
+
+    class Config: 
+        from_attributes = True
+
 class TokenData(BaseModel):
     email: Optional[str] = None
     user_id: Optional[str] = None

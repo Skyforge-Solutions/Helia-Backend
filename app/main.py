@@ -31,6 +31,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# a health check endpoint on / 
+@app.get("/")
+async def health_check():
+    return {"status": "ok"}
+
 # API routers
 app.include_router(auth_router, prefix="/api/auth", tags=["authentication"])
 app.include_router(chat_router, prefix="/api", tags=["chat"])
