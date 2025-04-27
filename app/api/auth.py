@@ -1,9 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
-from app.schemas.models import UserCreate, UserSchema, AuthResponse, PWResetRequestIn, PWResetVerifyIn
-from app.db.crud import create_user, authenticate_user, get_user_by_email, is_token_used, store_used_jti
-from app.utils.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_user, create_pw_reset_token, decode_pw_reset_token
+from app.schemas.models import UserCreate, UserSchema, AuthResponse, PWResetRequestIn, PWResetVerifyIn, TokenRefreshRequest
+from app.db.crud import (
+    create_user, authenticate_user, get_user_by_email, is_token_used, store_used_jti,
+    store_refresh_token, get_refresh_token, revoke_refresh_token, get_user_profile
+)
+from app.utils.auth import (
+    create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_user, 
+    create_pw_reset_token, decode_pw_reset_token, create_refresh_token, decode_refresh_token
+)
 from app.db.session import get_db, AsyncSession
 from app.db.models import User
 from app.schemas.models import (
@@ -57,7 +63,87 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         expires_delta=access_token_expires
     )
     
-    return {"access_token": access_token, "user_name": user.name}
+    # Create refresh token
+    refresh_token, expires_at = create_refresh_token(
+        data={"sub": user.email, "user_id": user.id}
+    )
+    
+    # Store refresh token in database
+    await store_refresh_token(user.id, refresh_token, expires_at, session=db)
+    
+    return {
+        "access_token": access_token, 
+        "refresh_token": refresh_token,
+        "user_name": user.name
+    }
+
+@router.post("/token/refresh", response_model=AuthResponse)
+async def refresh_token(
+    body: TokenRefreshRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    # Decode the refresh token
+    payload = decode_refresh_token(body.refresh_token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check if token exists in database and is not revoked
+    token_obj = await get_refresh_token(body.refresh_token, session=db)
+    if not token_obj:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Get user data
+    user_id = payload.get("user_id")
+    email = payload.get("sub")
+    
+    if not user_id or not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token claims",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Get user from database
+    user = await get_user_profile(user_id)
+    if not user or user.email != email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Security: Revoke the old refresh token (token rotation)
+    await revoke_refresh_token(body.refresh_token, session=db)
+    
+    # Create new access token
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.email, "user_id": user.id},
+        expires_delta=access_token_expires
+    )
+    
+    # Create new refresh token
+    new_refresh_token, expires_at = create_refresh_token(
+        data={"sub": user.email, "user_id": user.id}
+    )
+    
+    # Store new refresh token in database
+    await store_refresh_token(user.id, new_refresh_token, expires_at, session=db)
+    
+    return {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "user_name": user.name
+    }
 
 @router.get("/me", response_model=UserSchema)
 async def read_users_me(current_user: UserSchema = Depends(get_current_user)):

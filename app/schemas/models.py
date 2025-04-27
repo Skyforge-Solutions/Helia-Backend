@@ -23,6 +23,9 @@ class PWResetVerifyIn(BaseModel):
     token: str
     new_password: constr(min_length=6)
 
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
+
 class ChildInfo(BaseModel):
     name: str
     age: int
@@ -67,6 +70,7 @@ class Token(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user_name: str
 

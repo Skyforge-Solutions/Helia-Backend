@@ -36,6 +36,13 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    
+    # Add relationship to refresh tokens
+    refresh_tokens = relationship(
+        "RefreshToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
 
 class ChatSession(Base):
@@ -83,3 +90,18 @@ class UsedPWResetToken(Base):
     __tablename__ = "used_pw_reset_tokens"
     jti = Column(String, primary_key=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String, nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked = Column(Boolean, default=False)
+    issued_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationship back to user
+    user = relationship("User", back_populates="refresh_tokens")
+

@@ -2,10 +2,10 @@ from uuid import uuid4
 from sqlalchemy.future import select
 from sqlalchemy import func
 from app.db.session import AsyncSessionLocal, AsyncSession
-from app.db.models import User, ChatSession, ChatMessage,UsedPWResetToken
+from app.db.models import User, ChatSession, ChatMessage, UsedPWResetToken, RefreshToken
 from app.utils.password import get_password_hash, verify_password
 from app.db.models import EmailChangeRequest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 OTP_TTL_MIN = 15
 
@@ -168,8 +168,6 @@ async def authenticate_user(email: str, password: str, session: AsyncSession = N
         return None
     return user
 
-
-
 async def create_email_change_request(user, new_email: str, otp_plain: str, session: AsyncSession):
     req = EmailChangeRequest(
         id=str(uuid4()),
@@ -210,3 +208,67 @@ async def store_used_jti(jti: str, expires_at: datetime, session: AsyncSession):
     token = UsedPWResetToken(jti=jti, expires_at=expires_at)
     session.add(token)
     await session.commit()
+
+# Refresh token CRUD operations
+async def store_refresh_token(user_id: str, token: str, expires_at: datetime, session: AsyncSession = None) -> RefreshToken:
+    """Store a refresh token in the database."""
+    close_session = False
+    if session is None:
+        session = AsyncSessionLocal()
+        close_session = True
+    
+    try:
+        refresh_token = RefreshToken(
+            id=str(uuid4()),
+            user_id=user_id,
+            token=token,
+            expires_at=expires_at
+        )
+        session.add(refresh_token)
+        await session.commit()
+        await session.refresh(refresh_token)
+        return refresh_token
+    finally:
+        if close_session:
+            await session.close()
+
+async def get_refresh_token(token: str, session: AsyncSession = None) -> RefreshToken:
+    """Get a refresh token by its value."""
+    close_session = False
+    if session is None:
+        session = AsyncSessionLocal()
+        close_session = True
+    
+    try:
+        result = await session.execute(
+            select(RefreshToken)
+            .where(RefreshToken.token == token, RefreshToken.revoked == False)
+        )
+        return result.scalar_one_or_none()
+    finally:
+        if close_session:
+            await session.close()
+
+async def revoke_refresh_token(token: str, session: AsyncSession = None) -> bool:
+    """Mark a refresh token as revoked."""
+    close_session = False
+    if session is None:
+        session = AsyncSessionLocal()
+        close_session = True
+    
+    try:
+        result = await session.execute(
+            select(RefreshToken)
+            .where(RefreshToken.token == token)
+        )
+        refresh_token = result.scalar_one_or_none()
+        
+        if not refresh_token:
+            return False
+            
+        refresh_token.revoked = True
+        await session.commit()
+        return True
+    finally:
+        if close_session:
+            await session.close()
