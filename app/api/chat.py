@@ -1,4 +1,9 @@
-from fastapi import APIRouter, HTTPException, Depends
+import asyncio
+from fastapi import (
+    APIRouter, Depends, HTTPException,
+     UploadFile, File, Form
+)
+from typing import List, Optional
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from uuid import uuid4
@@ -17,55 +22,86 @@ from app.db.crud import (
 )
 from app.chains.base import get_chat_chain, chat_memory_store
 from app.utils.auth import get_current_user
+from app.services.azure_blob import upload_image_and_get_url
 
 router = APIRouter()
 
+# ─── MAIN ENDPOINT ──────────────────────────────────────────────────────────────
 @router.post("/chat/send", response_model=None)
-async def send_chat(req: ChatRequest, current_user: UserSchema = Depends(get_current_user)):
-    # Ensure this chat belongs to the current user
-    session = await get_chat_session(req.chat_id)
+async def send_chat(
+    chat_id:  str = Form(...),
+    model_id: str = Form(...),
+    message:  str = Form(...),
+    image: Optional[UploadFile] = File(None),
+    current_user: UserSchema = Depends(get_current_user),
+):
+    """
+    • Accepts multipart/form-data so a file can be sent along with the text fields.
+    • If an image is provided, it is validated & uploaded to Azure Blob Storage
+      and the resulting public URL is stored in `chat_messages.image_url`.
+    """
+
+    # 1) Ownership / authorisation ------------------------------------------------
+    session = await get_chat_session(chat_id)
     if session and session.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to access this chat")
+        raise HTTPException(403, "Not authorized to access this chat")
 
-    # Get or create session for this user
-    await get_or_create_session(current_user.id, req.chat_id)
+    # 2) Ensure chat session exists ----------------------------------------------
+    await get_or_create_session(current_user.id, chat_id)
 
-    # persist user message
-    await add_message(req.chat_id, "user", req.message, req.image_url)
+    # 3) Handle optional image upload --------------------------------------------
+    image_url: Optional[str] = None
+    if image:
+        try:
+            file_bytes = await image.read()
+            image_url = await upload_image_and_get_url(
+                file_bytes,
+                mime_type     = image.content_type,
+                user_id       = current_user.id,
+                original_name = image.filename,
+            )
+        except ValueError as ve:
+            raise HTTPException(400, str(ve))
+        except Exception as e:
+            raise HTTPException(500, "Image upload failed") from e
 
-    # Get user profile for personalization
-    user_profile = current_user.__dict__ if current_user else {}
-    
-    # Await the chain to get the runnable object
-    chain = await get_chat_chain(
-        chat_id=req.chat_id,
-        model_id=req.model_id,
-        user_profile=user_profile
-    )
-    
-    # Get the memory for this chat
-    memory = chat_memory_store.get(req.chat_id)
+    # 4) Persist the *user* message (text + optional url) -------------------------
+    await add_message(chat_id, "user", message, image_url)
 
-    # stream tokens
+    # 5) Build personalised chain -------------------------------------------------
+    user_profile = {k: v for k, v in current_user.__dict__.items()
+                    if not k.startswith("_")}
+
+    chain  = await get_chat_chain(chat_id, model_id, user_profile)
+    memory = chat_memory_store.get(chat_id)
+
+    # 6) SSE streaming back to client --------------------------------------------
     async def event_stream():
-        collected = []
-        # Get messages from memory to provide as history
+        collected: list[str] = []
         history = memory.chat_memory.messages if memory else []
-        
-        # Pass both input AND history to the chain
+
         async for chunk in chain.astream(
-            {"input": req.message, "history": history},
-            config={"configurable": {"memory": memory}}
+            {"input": message, "history": history},
+            config={"configurable": {"memory": memory}},
         ):
             token = chunk.content
             collected.append(token)
             yield f"data: {token}\n\n"
-        # after streaming, persist assistant message
+            await asyncio.sleep(0)            # flush
+
         full = "".join(collected)
-        await add_message(req.chat_id, "assistant", full)
+        await add_message(chat_id, "assistant", full)
         yield "event: end\ndata: END\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @router.get("/sessions", response_model=List[ChatSessionSchema])
 async def get_sessions(current_user: UserSchema = Depends(get_current_user)):

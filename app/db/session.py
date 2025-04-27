@@ -30,7 +30,7 @@ if 'neon.tech' in DATABASE_URL:
 try:
     engine = create_async_engine(
         DATABASE_URL,
-        echo=True,
+        echo=False, 
         future=True,
         # Configure connection pooling properly
         pool_size=20,

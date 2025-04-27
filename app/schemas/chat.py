@@ -1,5 +1,12 @@
 from pydantic import BaseModel
 from typing import Optional
+from fastapi import UploadFile, File
+
+class ChatSendForm(BaseModel):
+    chat_id: str
+    model_id: str
+    message: str
+    # image is sent as multipart file – not part of this model
 
 class ChatRequest(BaseModel):
     chat_id: str
