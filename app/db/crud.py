@@ -2,8 +2,12 @@ from uuid import uuid4
 from sqlalchemy.future import select
 from sqlalchemy import func
 from app.db.session import AsyncSessionLocal, AsyncSession
-from app.db.models import User, ChatSession, ChatMessage
+from app.db.models import User, ChatSession, ChatMessage,UsedPWResetToken
 from app.utils.password import get_password_hash, verify_password
+from app.db.models import EmailChangeRequest
+from datetime import datetime, timedelta
+
+OTP_TTL_MIN = 15
 
 async def get_or_create_user(user_id: str, profile: dict) -> User:
     async with AsyncSessionLocal() as session:
@@ -160,3 +164,46 @@ async def authenticate_user(email: str, password: str, session: AsyncSession = N
     if not verify_password(password, user.password):
         return None
     return user
+
+
+
+async def create_email_change_request(user, new_email: str, otp_plain: str, session: AsyncSession):
+    req = EmailChangeRequest(
+        id=str(uuid4()),
+        user_id=user.id,
+        new_email=new_email,
+        otp_hash=get_password_hash(otp_plain),
+        expires_at=datetime.utcnow() + timedelta(minutes=OTP_TTL_MIN),
+    )
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+async def get_latest_pending_email_request(user_id: str, session: AsyncSession):
+    result = await session.execute(
+        select(EmailChangeRequest)
+        .where(
+            EmailChangeRequest.user_id == user_id,
+            EmailChangeRequest.verified == False,
+        )
+        .order_by(EmailChangeRequest.expires_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+async def mark_email_request_verified(req: EmailChangeRequest, session: AsyncSession):
+    req.verified = True
+    req.user.email = req.new_email
+    await session.commit()
+
+async def is_token_used(jti: str, session: AsyncSession) -> bool:
+    result = await session.execute(
+        select(UsedPWResetToken).where(UsedPWResetToken.jti == jti)
+    )
+    return result.scalar_one_or_none() is not None
+
+async def store_used_jti(jti: str, expires_at: datetime, session: AsyncSession):
+    token = UsedPWResetToken(jti=jti, expires_at=expires_at)
+    session.add(token)
+    await session.commit()

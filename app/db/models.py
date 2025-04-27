@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -65,3 +66,20 @@ class ChatMessage(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     session = relationship("ChatSession", back_populates="messages")
+
+
+class EmailChangeRequest(Base):
+    __tablename__ = "email_change_requests"
+    __table_args__ = (UniqueConstraint("new_email"),)
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    new_email = Column(String, unique=True, nullable=False)
+    otp_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    verified = Column(Boolean, default=False)
+    user = relationship("User")
+
+class UsedPWResetToken(Base):
+    __tablename__ = "used_pw_reset_tokens"
+    jti = Column(String, primary_key=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)

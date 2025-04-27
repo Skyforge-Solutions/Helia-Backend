@@ -71,7 +71,7 @@ async def send_chat(req: ChatRequest, current_user: UserSchema = Depends(get_cur
 async def get_sessions(current_user: UserSchema = Depends(get_current_user)):
     return await list_sessions(current_user.id)
 
-@router.post("/sessions", response_model=ChatSessionSchema)
+@router.post("/sessions", response_model=ChatSessionSchema,status_code=201)
 async def create_session(name: Optional[str] = "New Chat", current_user: UserSchema = Depends(get_current_user)):
     session = await get_or_create_session(current_user.id, chat_id=str(uuid4()), name=name)
     return session
@@ -84,7 +84,7 @@ async def rename_session(chat_id: str, name: str, current_user: UserSchema = Dep
         raise HTTPException(status_code=404, detail="Chat session not found")
     
     session = await update_session_name(chat_id, name)
-    return session
+    return session  
 
 @router.delete("/sessions/{chat_id}", response_model=dict)
 async def delete_session(chat_id: str, current_user: UserSchema = Depends(get_current_user)):

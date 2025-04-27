@@ -3,6 +3,26 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime
 
+from pydantic import BaseModel, EmailStr, constr
+
+class PasswordUpdate(BaseModel):
+    current_password: constr(min_length=6)
+    new_password: constr(min_length=6)
+
+class EmailChangeRequestIn(BaseModel):
+    new_email: EmailStr
+    current_password: constr(min_length=6)
+
+class EmailChangeVerifyIn(BaseModel):
+    otp: constr(min_length=4, max_length=8)
+
+class PWResetRequestIn(BaseModel):
+    email: EmailStr
+
+class PWResetVerifyIn(BaseModel):
+    token: str
+    new_password: constr(min_length=6)
+
 class ChildInfo(BaseModel):
     name: str
     age: int
