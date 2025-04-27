@@ -26,10 +26,12 @@ async def get_or_create_session(user_id: str, chat_id: str, name: str = "New Cha
             # bump updated_at
             cs.updated_at = func.now()
             await session.commit()
+            await session.refresh(cs)
             return cs
         cs = ChatSession(id=chat_id, user_id=user_id, name=name)
         session.add(cs)
         await session.commit()
+        await session.refresh(cs)
         return cs
 
 async def list_sessions(user_id: str) -> list[ChatSession]:
@@ -90,6 +92,7 @@ async def update_session_name(chat_id: str, name: str) -> ChatSession:
         chat_session.name = name
         chat_session.updated_at = func.now()
         await session.commit()
+        await session.refresh(chat_session)
         return chat_session
 
 async def delete_chat_session(chat_id: str) -> bool:
