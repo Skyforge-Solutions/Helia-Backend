@@ -36,18 +36,33 @@ router = APIRouter()
 @router.post("/register", response_model=UserSchema,status_code=status.HTTP_201_CREATED)
 async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     db_user = await get_user_by_email(user.email, session=db)
+    
+    # If user exists but is not verified, allow re-registration
     if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        if db_user.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        # Re-use existing unverified account
+        created_user = db_user
+    else:
+        # Create new user if email doesn't exist
+        user_data = user.model_dump() 
+        password = user_data.pop("password")
+        created_user = await create_user(email=user.email, password=password, profile=user_data)
     
-    
-    user_data = user.model_dump() 
-    password = user_data.pop("password")
-    created_user = await create_user(email=user.email, password=password, profile=user_data)
     # Generate OTP and create verification request
     otp = gen_otp()
+    
+    # Get existing verification request and invalidate it
+    existing_req = await get_latest_pending_verification_request(created_user.id, db)
+    if existing_req:
+        # Invalidate previous request by setting expires_at to past time
+        existing_req.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        await db.commit()
+    
+    # Create new verification request
     await create_email_verification_request(created_user, created_user.email, otp, db)
     mail_otp(created_user.email, otp)  # Send OTP via email
     
