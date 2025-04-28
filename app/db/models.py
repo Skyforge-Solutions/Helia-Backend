@@ -29,7 +29,8 @@ class User(Base):
     parent_type      = Column(String, nullable=True)
     time_with_kids   = Column(String, nullable=True)
     children         = Column(JSON, nullable=True)  # list of dicts
-    is_active        = Column(Boolean, default=True)
+    is_active        = Column(Boolean, default=False)
+    is_verified     = Column(Boolean, default=False)
 
     sessions = relationship(
         "ChatSession",
@@ -105,3 +106,14 @@ class RefreshToken(Base):
     # Relationship back to user
     user = relationship("User", back_populates="refresh_tokens")
 
+class EmailVerificationRequest(Base):
+    __tablename__ = "email_verification_requests"
+    
+    id = Column(String, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    email = Column(String, nullable=False)
+    otp_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    verified = Column(Boolean, default=False)
+    
+    user = relationship("User")

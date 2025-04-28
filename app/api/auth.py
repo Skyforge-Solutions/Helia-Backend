@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
-from app.schemas.models import UserCreate, UserSchema, AuthResponse, PWResetRequestIn, PWResetVerifyIn, TokenRefreshRequest
+from app.schemas.models import (
+    UserCreate, UserSchema, AuthResponse, 
+    PWResetRequestIn, PWResetVerifyIn, 
+    TokenRefreshRequest,EmailVerificationVerifyIn)
 from app.db.crud import (
     create_user, authenticate_user, get_user_by_email, is_token_used, store_used_jti,
-    store_refresh_token, get_refresh_token, revoke_refresh_token, get_user_profile
+    store_refresh_token, get_refresh_token, revoke_refresh_token, get_user_profile,create_email_verification_request,
+    get_latest_pending_verification_request,mark_email_verification_verified
 )
 from app.utils.auth import (
     create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, get_current_user, 
@@ -42,6 +46,10 @@ async def register_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     user_data = user.model_dump() 
     password = user_data.pop("password")
     created_user = await create_user(email=user.email, password=password, profile=user_data)
+    # Generate OTP and create verification request
+    otp = gen_otp()
+    await create_email_verification_request(created_user, created_user.email, otp, db)
+    mail_otp(created_user.email, otp)  # Send OTP via email
     
     return created_user
 
@@ -52,7 +60,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
+            detail="Incorrect email or password or account not verified",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -70,11 +78,12 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     
     # Store refresh token in database
     await store_refresh_token(user.id, refresh_token, expires_at, session=db)
+    user_name = user.name if user.name else "User"
     
     return {
         "access_token": access_token, 
         "refresh_token": refresh_token,
-        "user_name": user.name
+        "user_name": user_name
     }
 
 @router.post("/token/refresh", response_model=AuthResponse)
@@ -255,4 +264,27 @@ async def pw_reset_verify(
     user.password = get_password_hash(body.new_password)
     await store_used_jti(payload["jti"], datetime.fromtimestamp(payload["exp"], timezone.utc), db)
     await db.commit()
+    return None
+
+
+@router.post("/verify-email", status_code=204)
+async def verify_email(
+    body: EmailVerificationVerifyIn,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await get_user_by_email(body.email, session=db)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    req = await get_latest_pending_verification_request(user.id, db)
+    if not req:
+        raise HTTPException(status_code=404, detail="No pending verification request")
+    
+    if req.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="OTP expired")
+    
+    if not verify_password(body.otp, req.otp_hash):
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    
+    await mark_email_verification_verified(req, db)
     return None

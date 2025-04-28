@@ -2,7 +2,7 @@ from uuid import uuid4
 from sqlalchemy.future import select
 from sqlalchemy import func
 from app.db.session import AsyncSessionLocal, AsyncSession
-from app.db.models import User, ChatSession, ChatMessage, UsedPWResetToken, RefreshToken
+from app.db.models import User, ChatSession, ChatMessage, UsedPWResetToken, RefreshToken,EmailVerificationRequest
 from app.utils.password import get_password_hash, verify_password
 from app.db.models import EmailChangeRequest
 from datetime import datetime, timedelta, timezone
@@ -166,6 +166,8 @@ async def authenticate_user(email: str, password: str, session: AsyncSession = N
         return None
     if not verify_password(password, user.password):
         return None
+    if not user.is_active or not user.is_verified:
+        return None
     return user
 
 async def create_email_change_request(user, new_email: str, otp_plain: str, session: AsyncSession):
@@ -272,3 +274,34 @@ async def revoke_refresh_token(token: str, session: AsyncSession = None) -> bool
     finally:
         if close_session:
             await session.close()
+
+async def create_email_verification_request(user, email: str, otp_plain: str, session: AsyncSession):
+    req = EmailVerificationRequest(
+        id=str(uuid4()),
+        user_id=user.id,
+        email=email,
+        otp_hash=get_password_hash(otp_plain),
+        expires_at= datetime.now(timezone.utc) + timedelta(minutes=OTP_TTL_MIN),
+    )
+    session.add(req)
+    await session.commit()
+    await session.refresh(req)
+    return req
+
+async def get_latest_pending_verification_request(user_id: str, session: AsyncSession):
+    result = await session.execute(
+        select(EmailVerificationRequest)
+        .where(
+            EmailVerificationRequest.user_id == user_id,
+            EmailVerificationRequest.verified == False,
+        )
+        .order_by(EmailVerificationRequest.expires_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+async def mark_email_verification_verified(req: EmailVerificationRequest, session: AsyncSession):
+    req.verified = True
+    req.user.is_verified = True
+    req.user.is_active = True
+    await session.commit()

@@ -26,6 +26,10 @@ class PWResetVerifyIn(BaseModel):
 class TokenRefreshRequest(BaseModel):
     refresh_token: str
 
+class EmailVerificationVerifyIn(BaseModel):
+    email: EmailStr
+    otp: constr(min_length=4, max_length=8)
+
 class ChildInfo(BaseModel):
     name: str
     age: int
@@ -60,6 +64,7 @@ class UserSchema(UserBase):
     time_with_kids: Optional[str] = None
     children: Optional[List[ChildInfo]] = None
     is_active: bool = True
+    is_verified: bool = False
 
     class Config:
         from_attributes = True
