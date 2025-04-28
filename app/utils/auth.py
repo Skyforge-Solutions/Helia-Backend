@@ -15,7 +15,7 @@ if not SECRET_KEY:
     raise ValueError("SECRET_KEY environment variable not set")
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 5   # 24 hours
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 PW_RESET_SCOPE = "pw_reset"
 PW_RESET_TTL_MIN = 30
