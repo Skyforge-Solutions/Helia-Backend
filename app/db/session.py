@@ -10,9 +10,7 @@ import sys
 base_dir = pathlib.Path(__file__).parent.parent.parent.absolute()
 env_path = base_dir / ".env"
 load_dotenv(dotenv_path=env_path)
-
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not DATABASE_URL:
     raise ValueError(f"DATABASE_URL environment variable is not set. Check your .env file at {env_path}")
 
@@ -33,10 +31,12 @@ try:
         echo=False, 
         future=True,
         # Configure connection pooling properly
-        pool_size=20,
-        max_overflow=20,
+        pool_size=10,
+        max_overflow=10,
         pool_pre_ping=True,  # Test connections before using them
         pool_recycle=3600,   # Recycle connections after 1 hour
+        pool_timeout=30,    # Timeout for acquiring a connection from the pool
+        pool_use_lifo=True,
         connect_args={
             "server_settings": {"application_name": "HeliaChat"},
             **({"ssl": ssl_mode} if ssl_mode else {})

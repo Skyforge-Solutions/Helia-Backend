@@ -1,15 +1,24 @@
 import asyncio
-from fastapi import (
-    APIRouter, Depends, HTTPException,
-     UploadFile, File, Form
-)
-from typing import List, Optional
-from fastapi.responses import StreamingResponse
-from typing import List, Optional
 from uuid import uuid4
+from typing import List, Optional
 
-from app.schemas.chat import ChatRequest
-from app.schemas.models import ChatSessionSchema, ChatMessageSchema, UserSchema
+from fastapi import (
+    APIRouter, 
+    Depends, 
+    HTTPException,
+    UploadFile, 
+    File, 
+    Form
+)
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import StreamingResponse
+
+from app.db.session import get_db
+from app.utils.auth import get_current_user
+from app.services.azure_blob import upload_image_and_get_url
+from app.schemas.models import ChatSessionSchema, ChatMessageSchema, UserSchema,UserProfileUpdate
+from app.chains.base import get_chat_chain, chat_memory_store
 from app.db.crud import (
     get_or_create_session,
     list_sessions,
@@ -18,12 +27,9 @@ from app.db.crud import (
     update_user_profile,
     update_session_name,
     delete_chat_session,
-    get_chat_session
+    get_chat_session,
+    get_chat_session_owned,
 )
-from app.chains.base import get_chat_chain, chat_memory_store
-from app.utils.auth import get_current_user
-from app.services.azure_blob import upload_image_and_get_url
-
 router = APIRouter()
 
 # ─── MAIN ENDPOINT ──────────────────────────────────────────────────────────────
@@ -34,20 +40,16 @@ async def send_chat(
     message:  str = Form(...),
     image: Optional[UploadFile] = File(None),
     current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    • Accepts multipart/form-data so a file can be sent along with the text fields.
-    • If an image is provided, it is validated & uploaded to Azure Blob Storage
-      and the resulting public URL is stored in `chat_messages.image_url`.
-    """
 
-    # 1) Ownership / authorisation ------------------------------------------------
-    session = await get_chat_session(chat_id)
+    # 1) ownership check + lazy creation ------------------------------------------------
+    session = await get_chat_session(chat_id,db)
     if session and session.user_id != current_user.id:
         raise HTTPException(403, "Not authorized to access this chat")
 
     # 2) Ensure chat session exists ----------------------------------------------
-    await get_or_create_session(current_user.id, chat_id)
+    await get_or_create_session(current_user.id, chat_id,db)
 
     # 3) Handle optional image upload --------------------------------------------
     image_url: Optional[str] = None
@@ -66,7 +68,7 @@ async def send_chat(
             raise HTTPException(500, "Image upload failed") from e
 
     # 4) Persist the *user* message (text + optional url) -------------------------
-    await add_message(chat_id, "user", message, image_url)
+    await add_message(chat_id, "user", message, image_url,db)
 
     # 5) Build personalised chain -------------------------------------------------
     user_profile = {k: v for k, v in current_user.__dict__.items()
@@ -86,11 +88,10 @@ async def send_chat(
         ):
             token = chunk.content
             collected.append(token)
-            yield f"data: {token}\n\n"
-            await asyncio.sleep(0)            # flush
+            yield f"data: {token}\n\n"          # flush
 
         full = "".join(collected)
-        await add_message(chat_id, "assistant", full)
+        await add_message(chat_id, "assistant", full,db)
         yield "event: end\ndata: END\n\n"
 
     return StreamingResponse(
@@ -102,58 +103,83 @@ async def send_chat(
         },
     )
 
-
 @router.get("/sessions", response_model=List[ChatSessionSchema])
-async def get_sessions(current_user: UserSchema = Depends(get_current_user)):
-    return await list_sessions(current_user.id)
+async def get_sessions(
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    return await list_sessions(current_user.id,db)
 
 @router.post("/sessions", response_model=ChatSessionSchema,status_code=201)
-async def create_session(name: Optional[str] = "New Chat", current_user: UserSchema = Depends(get_current_user)):
-    session = await get_or_create_session(current_user.id, chat_id=str(uuid4()), name=name)
+async def create_session(
+    name: Optional[str] = "New Chat", 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await get_or_create_session(
+        current_user.id, 
+        chat_id=str(uuid4()), 
+        session=db,
+        name=name,
+    )
     return session
 
 @router.put("/sessions/{chat_id}", response_model=ChatSessionSchema)
-async def rename_session(chat_id: str, name: str, current_user: UserSchema = Depends(get_current_user)):
+async def rename_session(
+    chat_id: str, 
+    name: str, 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Check ownership
-    session = await get_chat_session(chat_id)
-    if not session or session.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    session = await update_session_name(chat_id, name)
-    return session  
+    if not await get_chat_session_owned(chat_id, current_user.id, db):
+        raise HTTPException(404, "Chat session not found")
+    return await update_session_name(chat_id, name, db)
 
 @router.delete("/sessions/{chat_id}", response_model=dict)
-async def delete_session(chat_id: str, current_user: UserSchema = Depends(get_current_user)):
+async def delete_session(
+    chat_id: str, 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    ):
     # Check ownership
-    session = await get_chat_session(chat_id)
-    if not session or session.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    success = await delete_chat_session(chat_id)
+    if not await get_chat_session_owned(chat_id, current_user.id, db):
+        raise HTTPException(404, "Chat session not found")
+    await delete_chat_session(chat_id, db)
     return {"status": "success", "message": "Chat session deleted"}
 
 @router.get("/sessions/{chat_id}", response_model=ChatSessionSchema)
-async def get_session(chat_id: str, current_user: UserSchema = Depends(get_current_user)):
-    session = await get_chat_session(chat_id)
-    if not session or session.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    return session
+async def get_session(
+    chat_id: str, 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session_obj = await get_chat_session_owned(chat_id, current_user.id, db)
+    if not session_obj:
+        raise HTTPException(404, "Chat session not found")
+    return session_obj
 
 @router.get("/history/{chat_id}", response_model=List[ChatMessageSchema])
-async def get_history(chat_id: str, current_user: UserSchema = Depends(get_current_user)):
+async def get_history(
+    chat_id: str, 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Check ownership
-    session = await get_chat_session(chat_id)
-    if not session or session.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Chat session not found")
-    
-    msgs = await get_messages(chat_id)
-    return msgs
+    session_obj = await get_chat_session_owned(chat_id, current_user.id, db)
+    if not session_obj:
+        raise HTTPException(404, "Chat session not found")
+    return await get_messages(chat_id, db)
 
 @router.put("/users/me", response_model=UserSchema)
-async def update_my_profile(profile_data: dict, current_user: UserSchema = Depends(get_current_user)):
+async def update_my_profile(
+    profile_data: UserProfileUpdate, 
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Update the current user's profile
-    user = await update_user_profile(current_user.id, profile_data)
-    return user
+    profile_dict = profile_data.model_dump(exclude_unset=True)
+    return await update_user_profile(current_user.id, profile_dict, db)
 
 @router.get("/users/me", response_model=UserSchema)
 async def get_my_profile(current_user: UserSchema = Depends(get_current_user)):

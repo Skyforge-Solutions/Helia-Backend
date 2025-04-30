@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
@@ -44,6 +45,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    # Add table args with index
+    __table_args__=(
+        Index("idx_users_email_verified", "email", "is_verified"),
+    )
 
 
 class ChatSession(Base):
@@ -62,6 +67,16 @@ class ChatSession(Base):
         cascade="all, delete-orphan",
     )
 
+    __table_args__ = (
+        # composite covering index
+        Index(
+            "idx_chat_sessions_by_user_updated",
+            "user_id",
+            "updated_at",
+            postgresql_ops={"updated_at": "DESC"}   # keeps rows pre-sorted
+        ),
+    )
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -75,10 +90,24 @@ class ChatMessage(Base):
 
     session = relationship("ChatSession", back_populates="messages")
 
+    __table_args__ = (
+        Index(
+            "idx_chat_messages_by_chat_time",
+            "chat_id",
+            "timestamp"          # ASC by default
+        ),
+    )
 
 class EmailChangeRequest(Base):
     __tablename__ = "email_change_requests"
-    __table_args__ = (UniqueConstraint("new_email"),)
+    __table_args__ = (
+        UniqueConstraint("new_email"),
+        Index(
+            "idx_email_change_user_expires",
+            "user_id", "verified", "expires_at",
+            postgresql_ops={"expires_at": "DESC"}
+        ),
+    )
     id = Column(String, primary_key=True, index=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     new_email = Column(String, unique=True, nullable=False)
@@ -108,7 +137,13 @@ class RefreshToken(Base):
 
 class EmailVerificationRequest(Base):
     __tablename__ = "email_verification_requests"
-    
+    __table_args__ = (
+        Index(
+            "idx_email_verification_user_expires",
+            "user_id", "verified", "expires_at",
+            postgresql_ops={"expires_at": "DESC"}
+        ),
+    )
     id = Column(String, primary_key=True, index=True)
     user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     email = Column(String, nullable=False)

@@ -36,6 +36,7 @@ class ChildInfo(BaseModel):
     gender: str
     description: Optional[str] = None
 
+
 class UserBase(BaseModel):
     email: EmailStr
 
@@ -68,6 +69,16 @@ class UserSchema(UserBase):
 
     class Config:
         from_attributes = True
+
+class UserProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    age: Optional[str] = None
+    occupation: Optional[str] = None
+    tone_preference: Optional[str] = None
+    tech_familiarity: Optional[str] = None
+    parent_type: Optional[str] = None
+    time_with_kids: Optional[str] = None
+    children: Optional[List[ChildInfo]] = None
 
 class Token(BaseModel):
     access_token: str
