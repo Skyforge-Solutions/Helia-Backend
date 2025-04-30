@@ -139,16 +139,6 @@ async def get_chat_session(
         return await session.get(ChatSession, chat_id)
 
 # ─────────────────────────────  Users & auth  ───────────────────────────────
-# async def get_user_by_email(
-#         email: str, 
-#         session: AsyncSession
-#     ) -> Optional[User]:
-#         """Get a user by email with improved session handling."""
-#         stmt = (
-#             select(User)
-#             .where(User.email == email, User.is_verified == True)  # idx_users_email_verified
-#         )
-#         return (await session.execute(stmt)).scalar_one_or_none()
 
 async def get_user_by_email(
         email: str, 

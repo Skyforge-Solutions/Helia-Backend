@@ -31,9 +31,8 @@ try:
         echo=False, 
         future=True,
         # Configure connection pooling properly
-        pool_size=10,
+        pool_size=5,
         max_overflow=10,
-        pool_pre_ping=True,  # Test connections before using them
         pool_recycle=3600,   # Recycle connections after 1 hour
         pool_timeout=30,    # Timeout for acquiring a connection from the pool
         pool_use_lifo=True,

@@ -54,8 +54,8 @@ async def send_chat(
     # 3) Handle optional image upload --------------------------------------------
     image_url: Optional[str] = None
     if image:
+        file_bytes = await image.read()
         try:
-            file_bytes = await image.read()
             image_url = await upload_image_and_get_url(
                 file_bytes,
                 mime_type     = image.content_type,
@@ -68,13 +68,19 @@ async def send_chat(
             raise HTTPException(500, "Image upload failed") from e
 
     # 4) Persist the *user* message (text + optional url) -------------------------
-    await add_message(chat_id, "user", message, image_url,db)
+    await add_message(
+        chat_id=chat_id,
+        role="user",
+        content=message,
+        session=db,
+        image_url=image_url,
+    )
 
     # 5) Build personalised chain -------------------------------------------------
     user_profile = {k: v for k, v in current_user.__dict__.items()
                     if not k.startswith("_")}
 
-    chain  = await get_chat_chain(chat_id, model_id, user_profile)
+    chain  = await get_chat_chain(chat_id, model_id, user_profile,db)
     memory = chat_memory_store.get(chat_id)
 
     # 6) SSE streaming back to client --------------------------------------------
@@ -88,10 +94,19 @@ async def send_chat(
         ):
             token = chunk.content
             collected.append(token)
-            yield f"data: {token}\n\n"          # flush
+            # split into lines to preserve markdown
+            for line in token.splitlines():
+                yield f"data: {line}\n"
+            yield "data: \n"
+            await asyncio.sleep(0)
 
         full = "".join(collected)
-        await add_message(chat_id, "assistant", full,db)
+        await add_message(
+            chat_id=chat_id,
+            role="assistant",
+            content=full,
+            session=db
+        )
         yield "event: end\ndata: END\n\n"
 
     return StreamingResponse(
