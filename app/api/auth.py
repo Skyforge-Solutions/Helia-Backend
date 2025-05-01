@@ -29,7 +29,6 @@ from app.schemas.models import (
     EmailVerificationVerifyIn,
     UserCreate,
     UserSchema,
-    DeleteAccountRequest,
 )
 from app.db.crud import (
     authenticate_user,
