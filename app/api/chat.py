@@ -29,6 +29,7 @@ from app.db.crud import (
     delete_chat_session,
     get_chat_session,
     get_chat_session_owned,
+    delete_all_user_sessions
 )
 router = APIRouter()
 
@@ -117,6 +118,19 @@ async def send_chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+@router.delete("/sessions", response_model=dict)
+async def delete_all_sessions(
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all chat sessions for the currently logged-in user."""
+    count = await delete_all_user_sessions(current_user.id, db)
+    return {
+        "status": "success", 
+        "message": f"All chat sessions deleted successfully",
+        "count": count
+    }
 
 @router.get("/sessions", response_model=List[ChatSessionSchema])
 async def get_sessions(

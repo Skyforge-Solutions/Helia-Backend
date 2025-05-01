@@ -29,6 +29,7 @@ from app.schemas.models import (
     EmailVerificationVerifyIn,
     UserCreate,
     UserSchema,
+    DeleteAccountRequest,
 )
 from app.db.crud import (
     authenticate_user,
@@ -46,6 +47,7 @@ from app.db.crud import (
     revoke_refresh_token,
     store_refresh_token,
     store_used_jti,
+    delete_user_account,
 )
 
 OTP_TTL_MIN = 15
@@ -55,6 +57,27 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 # ──f─────────────────────────── register  ───────────────────────────────────────
 
+@router.delete("/me", response_model=dict)
+async def delete_my_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete the current user's account and all associated data.
+    Requires password confirmation for security.
+    """
+    
+    success = await delete_user_account(current_user.id, db)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete account"
+        )
+    
+    return {
+        "status": "success",
+        "message": "Account successfully deleted"
+    }
 
 @router.post("/register", response_model=UserSchema, status_code=201)
 async def register_user(
@@ -82,7 +105,7 @@ async def register_user(
     prev = await get_latest_pending_verification_request(user.id, db)
     if prev:
         prev.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-        await db.commit()  # Don't forget to commit changes
+        await db.commit()  # commit changes
     
     await create_email_verification_request(user, user.email, otp, db)
     mail_otp(user.email, otp)

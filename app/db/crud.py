@@ -1,7 +1,8 @@
 from typing import List, Optional
 from uuid import uuid4
+
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func , delete as sa_delete
 from app.db.session import AsyncSession
 from app.db.models import User, ChatSession, ChatMessage, UsedPWResetToken, RefreshToken,EmailVerificationRequest
 from app.utils.password import get_password_hash, verify_password
@@ -138,7 +139,83 @@ async def get_chat_session(
     ) -> Optional[ChatSession]:
         return await session.get(ChatSession, chat_id)
 
+
+async def delete_all_user_sessions(
+    user_id: str,
+    session: AsyncSession,
+) -> int:
+    """Delete all chat sessions for a user and return the count of deleted sessions."""
+    # First get all session IDs to clear from memory store
+    stmt = select(ChatSession.id).where(ChatSession.user_id == user_id)
+    session_ids = [row[0] for row in (await session.execute(stmt)).all()]
+    
+    # Remove from in-memory store
+    from app.chains.base import chat_memory_store
+    for chat_id in session_ids:
+        chat_memory_store.pop(chat_id, None)
+    
+    # First delete all messages related to these sessions
+    delete_messages_stmt = sa_delete(ChatMessage).where(ChatMessage.chat_id.in_(session_ids))
+    await session.execute(delete_messages_stmt)
+    
+    # Then delete all sessions in database
+    stmt = sa_delete(ChatSession).where(ChatSession.user_id == user_id)
+    result = await session.execute(stmt)
+    await session.commit()
+    
+    return result.rowcount
+
 # ─────────────────────────────  Users & auth  ───────────────────────────────
+
+async def delete_user_account(
+    user_id: str,
+    session: AsyncSession,
+) -> bool:
+    # Get all the user's session IDs
+    stmt = select(ChatSession.id).where(ChatSession.user_id == user_id)
+    session_ids = [row[0] for row in (await session.execute(stmt)).all()]
+    
+    # Clear in-memory chat stores
+    from app.chains.base import chat_memory_store
+    for chat_id in session_ids:
+        chat_memory_store.pop(chat_id, None)
+    
+    # BEGIN TRANSACTION - handled by SQLAlchemy
+    try:
+        # 1. Delete all messages from the user's chat sessions
+        if session_ids:
+            delete_messages_stmt = sa_delete(ChatMessage).where(ChatMessage.chat_id.in_(session_ids))
+            await session.execute(delete_messages_stmt)
+        
+        # 2. Delete all chat sessions
+        delete_sessions_stmt = sa_delete(ChatSession).where(ChatSession.user_id == user_id)
+        await session.execute(delete_sessions_stmt)
+        
+        # 3. Delete all refresh tokens
+        delete_tokens_stmt = sa_delete(RefreshToken).where(RefreshToken.user_id == user_id)
+        await session.execute(delete_tokens_stmt)
+        
+        # Delete email verification and change requests
+        delete_verification_stmt = sa_delete(EmailVerificationRequest).where(EmailVerificationRequest.user_id == user_id)
+        await session.execute(delete_verification_stmt)
+        
+        delete_email_change_stmt = sa_delete(EmailChangeRequest).where(EmailChangeRequest.user_id == user_id)
+        await session.execute(delete_email_change_stmt)
+        
+        # 4. Finally delete the user
+        user = await session.get(User, user_id)
+        if not user:
+            return False
+            
+        await session.delete(user)
+        await session.commit()
+        return True
+    
+    except Exception:
+        # If anything fails, roll back the entire transaction
+        await session.rollback()
+        raise
+
 
 async def get_user_by_email(
         email: str, 
