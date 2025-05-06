@@ -69,16 +69,6 @@ def decode_refresh_token(token: str) -> Optional[dict]:
         return None
 
 
-# def create_pw_reset_token(user_id: str) -> str:
-#     return create_access_token(
-#         {
-#         "sub": user_id, 
-#          "scope": PW_RESET_SCOPE, 
-#          "jti": str(uuid4())
-#          },
-#         timedelta(minutes=PW_RESET_TTL_MIN),
-#     )
-
 def create_pw_reset_token(user_id: str) -> str:
     """Generate a JWT for password reset with user_id, scope, and unique jti."""
     return create_access_token(

@@ -72,7 +72,8 @@ async def add_message(
             chat_id=chat_id,
             role=role,
             content=content,
-            image_url=image_url
+            image_url=image_url,
+            timestamp=datetime.now(timezone.utc),
         )
         session.add(msg)
         await session.commit()

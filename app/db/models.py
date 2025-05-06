@@ -31,7 +31,7 @@ class User(Base):
     time_with_kids   = Column(String, nullable=True)
     children         = Column(JSON, nullable=True)  # list of dicts
     is_active        = Column(Boolean, default=False)
-    is_verified     = Column(Boolean, default=False)
+    is_verified      = Column(Boolean, default=False)
 
     sessions = relationship(
         "ChatSession",
@@ -134,6 +134,16 @@ class RefreshToken(Base):
     
     # Relationship back to user
     user = relationship("User", back_populates="refresh_tokens")
+
+    __table_args__ = (
+        # Index to efficiently query valid tokens
+        Index(
+            "idx_valid_refresh_tokens",
+            "user_id",
+            "expires_at",
+            postgresql_where=(revoked == False),
+        ),
+    )
 
 class EmailVerificationRequest(Base):
     __tablename__ = "email_verification_requests"

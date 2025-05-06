@@ -30,6 +30,10 @@ from app.db.crud import (
     get_chat_session,
     get_chat_session_owned,
 )
+
+from openai import BadRequestError
+from app.utils.content_filter import get_content_filter_response 
+
 router = APIRouter()
 
 # ─── MAIN ENDPOINT ──────────────────────────────────────────────────────────────
@@ -77,37 +81,75 @@ async def send_chat(
     )
 
     # 5) Build personalised chain -------------------------------------------------
-    user_profile = {k: v for k, v in current_user.__dict__.items()
-                    if not k.startswith("_")}
+    user_profile = {
+        "name": current_user.name,
+        "age": current_user.age,
+        "occupation": current_user.occupation,
+        "tone_preference": current_user.tone_preference,
+        "tech_familiarity": current_user.tech_familiarity,
+        "parent_type": current_user.parent_type,
+        "time_with_kids": current_user.time_with_kids,
+        "children": current_user.children,
+}
+    print(f"User profile: {user_profile}")
+
+    # Update memory management
+    from app.chains.base import touch_memory , manage_memory_size
+    touch_memory(chat_id)
+    manage_memory_size()
 
     chain  = await get_chat_chain(chat_id, model_id, user_profile,db)
     memory = chat_memory_store.get(chat_id)
+    if memory:
+        print(f'memory for chat {chat_id} found, messages: {len(memory.chat_memory.messages)}')
+    else:
+        print(f'memory for chat {chat_id} not found, creating new one')
 
     # 6) SSE streaming back to client --------------------------------------------
     async def event_stream():
         collected: list[str] = []
         history = memory.chat_memory.messages if memory else []
 
-        async for chunk in chain.astream(
-            {"input": message, "history": history},
-            config={"configurable": {"memory": memory}},
-        ):
-            token = chunk.content
-            collected.append(token)
-            # split into lines to preserve markdown
-            for line in token.splitlines():
-                yield f"data: {line}\n"
-            yield "data: \n"
-            await asyncio.sleep(0)
+        try:
+            async for chunk in chain.astream(
+                {"input": message, "history": history},
+                config={"configurable": {"memory": memory}},
+            ):
+                token = chunk.content
+                collected.append(token)
+                # split into lines to preserve markdown
+                for line in token.splitlines():
+                    yield f"data: {line}\n"
+                yield "data: \n"
+                await asyncio.sleep(0)
 
-        full = "".join(collected)
-        await add_message(
-            chat_id=chat_id,
-            role="assistant",
-            content=full,
-            session=db
-        )
-        yield "event: end\ndata: END\n\n"
+            full = "".join(collected)
+            await add_message(
+                chat_id=chat_id,
+                role="assistant",
+                content=full,
+                session=db
+            )
+            yield "event: end\ndata: END\n\n"
+        except BadRequestError as e:
+            if e.code == "content_filter":
+                # Use the utility function to get a dynamic, model-specific response
+                response = get_content_filter_response(e, model_id)
+                # Stream the response in SSE format
+                for line in response.splitlines():
+                    yield f"data: {line}\n"
+                yield "data: \n"
+                # Persist the response to the database
+                await add_message(
+                    chat_id=chat_id,
+                    role="assistant",
+                    content=response,
+                    session=db
+                )
+                yield "event: end\ndata: END\n\n"
+            else:
+                # For other BadRequestErrors, re-raise the exception
+                raise e
 
     return StreamingResponse(
         event_stream(),
@@ -117,6 +159,11 @@ async def send_chat(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+
+
+
 
 @router.get("/sessions", response_model=List[ChatSessionSchema])
 async def get_sessions(

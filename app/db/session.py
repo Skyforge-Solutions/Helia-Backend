@@ -33,7 +33,7 @@ try:
         # Configure connection pooling properly
         pool_size=5,
         max_overflow=10,
-        pool_recycle=3600,   # Recycle connections after 1 hour
+        pool_recycle=1800,   # Recycle connections after 1 hour
         pool_timeout=30,    # Timeout for acquiring a connection from the pool
         pool_use_lifo=True,
         connect_args={
