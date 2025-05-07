@@ -88,6 +88,24 @@ async def create_checkout(
     credits = PRODUCT_CREDIT_MAP[request.product_id]
     
     try:
+        # First, check if customer exists in Dodo's system or create if not
+        try:
+            # Try to fetch the customer
+            dodo_customer = client.customers.get(customer_id=current_user.id)
+            logger.info(f"Found existing Dodo customer: {current_user.id}")
+        except Exception as e:
+            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
+                # Customer doesn't exist, create one
+                logger.info(f"Creating new Dodo customer for user: {current_user.id}")
+                dodo_customer = client.customers.create(
+                    customer_id=current_user.id,
+                    email=current_user.email,
+                    name=current_user.name or "HeliaChat User"
+                )
+            else:
+                # Some other error occurred
+                raise e
+        
         # Create payment with Dodo
         payment_result = client.payments.create(
             billing={
