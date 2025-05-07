@@ -62,8 +62,8 @@ async def dodo_webhook(
     
     # Verify the signature with raw bytes instead of decoded string
     try:
-        # Use raw payload bytes for verification
-        await webhook.verify(payload, headers)
+        # Use raw payload bytes for verification - webhook.verify is synchronous, not async
+        webhook.verify(payload, headers)
         # Only decode after verification for processing
         raw_body = payload.decode('utf-8')
     except Exception as e:
