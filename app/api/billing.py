@@ -19,7 +19,7 @@ from app.schemas.payment import (
     CheckoutResponse, 
     CreditPurchaseResponse
 )
-from app.db.models import CreditPurchase
+from app.db.models import CreditPurchase, User
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -62,23 +62,51 @@ async def get_credits(current_user: UserSchema = Depends(get_current_user)):
     """
     return {"credits_remaining": current_user.credits_remaining}
 
-def get_or_create_dodo_customer(user):
+def get_or_create_dodo_customer(user, db):
     """
     Helper function to get or create a Dodo customer.
     Uses the correct retrieve() method and handles NotFoundError.
+    
+    This function will:
+    1. Check if the user already has a Dodo customer ID stored
+    2. If yes, retrieve that customer from Dodo
+    3. If no, create a new customer in Dodo with just email and name
+    4. Store the Dodo-generated customer ID in our database
     """
     try:
-        return client.customers.retrieve(customer_id=user.id)
-    except NotFoundError:
-        # Customer doesn't exist, create one
+        # Check if we already have a Dodo customer ID for this user
+        if user.dodo_customer_id:
+            # We have an existing Dodo customer ID, retrieve it
+            return client.customers.retrieve(customer_id=user.dodo_customer_id)
+        
+        # No Dodo customer ID stored, create a new one
         logger.info(f"Creating new Dodo customer for user: {user.id}")
-        return client.customers.create(
-            body={
-                "customer_id": user.id,
-                "email": user.email,
-                "name": user.name or "HeliaChat User"
-            }
-        )
+        
+        # Create customer with just email and name (per Dodo API requirements)
+        dodo_customer = client.customers.create({
+            "email": user.email,
+            "name": user.name or "HeliaChat User"
+        })
+        
+        # Store the Dodo-generated customer ID in our database
+        user.dodo_customer_id = dodo_customer.customer_id
+        
+        return dodo_customer
+        
+    except NotFoundError:
+        # The stored Dodo customer ID is no longer valid, create a new one
+        logger.info(f"Dodo customer not found, creating new one for user: {user.id}")
+        
+        # Create customer with just email and name
+        dodo_customer = client.customers.create({
+            "email": user.email,
+            "name": user.name or "HeliaChat User"
+        })
+        
+        # Update the Dodo customer ID in our database
+        user.dodo_customer_id = dodo_customer.customer_id
+        
+        return dodo_customer
 
 @router.post("/create-checkout", response_model=CheckoutResponse, status_code=status.HTTP_201_CREATED, tags=["billing"])
 async def create_checkout(
@@ -107,8 +135,16 @@ async def create_checkout(
     credits = PRODUCT_CREDIT_MAP[request.product_id]
     
     try:
+        # Get the actual user model from database for updating
+        user_stmt = select(User).where(User.id == current_user.id)
+        user_result = await db.execute(user_stmt)
+        user_model = user_result.scalar_one()
+        
         # First, ensure customer exists in Dodo's system
-        dodo_customer = get_or_create_dodo_customer(current_user)
+        dodo_customer = get_or_create_dodo_customer(user_model, db)
+        
+        # Commit the user changes to save the dodo_customer_id
+        await db.commit()
         
         # Create payment with Dodo
         payment_result = client.payments.create(
@@ -120,7 +156,7 @@ async def create_checkout(
                 "zipcode": "560001",  # Already a string, keeping it consistent
             },
             product_cart=[{"product_id": request.product_id, "quantity": 1}],
-            customer={"customer_id": current_user.id},
+            customer={"customer_id": user_model.dodo_customer_id},  # Use the stored Dodo customer ID
             metadata={"user_id": str(current_user.id), "credits": str(credits)},
             payment_link=True,
             return_url="https://heliachat.com/checkout-success"  # Customize your return URL

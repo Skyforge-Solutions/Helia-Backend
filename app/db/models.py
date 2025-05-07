@@ -34,6 +34,7 @@ class User(Base):
     is_active        = Column(Boolean, default=False)
     is_verified      = Column(Boolean, default=False)
     credits_remaining = Column(Integer, nullable=False, default=100)
+    dodo_customer_id = Column(String, nullable=True, index=True)
 
     sessions = relationship(
         "ChatSession",
