@@ -56,7 +56,7 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 # ──f─────────────────────────── register  ───────────────────────────────────────
 
 
-@router.post("/register", response_model=UserSchema, status_code=201)
+@router.post("/register", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
 async def register_user(
     body: UserCreate,
     db:   AsyncSession = Depends(get_db),
