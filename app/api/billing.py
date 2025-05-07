@@ -89,13 +89,13 @@ async def create_checkout(
     
     try:
         # Create payment with Dodo
-        payment_result = client.payments.create({
-            "product_cart": [{"product_id": request.product_id, "quantity": 1}],
-            "customer": {"customer_id": current_user.id},
-            "metadata": {"user_id": current_user.id, "credits": credits},
-            "payment_link": True,
-            "return_url": "https://heliachat.com/checkout-success"  # Customize your return URL
-        })
+        payment_result = client.payments.create(
+            product_cart=[{"product_id": request.product_id, "quantity": 1}],
+            customer={"customer_id": current_user.id},
+            metadata={"user_id": current_user.id, "credits": credits},
+            payment_link=True,
+            return_url="https://heliachat.com/checkout-success"  # Customize your return URL
+        )
         
         # Create pending purchase record in database
         purchase = CreditPurchase(
