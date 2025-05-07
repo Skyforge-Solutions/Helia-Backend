@@ -38,7 +38,6 @@ async def dodo_webhook(
     """
     # Get the raw payload
     payload = await request.body()
-    raw_body = payload.decode('utf-8')
     
     # Log the incoming webhook (excluding sensitive data)
     logger.info(f"Received Dodo webhook with ID: {webhook_id}")
@@ -61,9 +60,12 @@ async def dodo_webhook(
         "webhook-timestamp": webhook_timestamp,
     }
     
-    # Verify the signature
+    # Verify the signature with raw bytes instead of decoded string
     try:
-        await webhook.verify(raw_body, headers)
+        # Use raw payload bytes for verification
+        await webhook.verify(payload, headers)
+        # Only decode after verification for processing
+        raw_body = payload.decode('utf-8')
     except Exception as e:
         logger.error(f"Webhook signature verification failed: {str(e)}")
         raise HTTPException(
@@ -74,15 +76,22 @@ async def dodo_webhook(
     # Process the event payload
     try:
         event_data = json.loads(raw_body)
-        logger.info(f"Processing webhook event type: {event_data.get('type', 'unknown')}")
+        event_type = event_data.get("type", "unknown")
+        logger.info(f"Processing webhook event type: {event_type}")
         
-        # Handle payment.succeeded events
-        if event_data.get("type") == "payment.succeeded":
+        # Handle payment events
+        if event_type == "payment.succeeded":
             await process_successful_payment(event_data, db)
-            return {"status": "success"}
+            return {"status": "success", "event_type": event_type}
+        elif event_type == "payment.failed":
+            await process_failed_payment(event_data, db)
+            return {"status": "success", "event_type": event_type}
+        elif event_type == "payment.expired":
+            await process_expired_payment(event_data, db)
+            return {"status": "success", "event_type": event_type}
         
         # Handle other event types as needed
-        logger.info(f"No handler for event type: {event_data.get('type', 'unknown')}")
+        logger.info(f"No specific handler for event type: {event_type}")
         return {"status": "received", "message": "Event acknowledged but not processed"}
     
     except json.JSONDecodeError:
@@ -139,4 +148,60 @@ async def process_successful_payment(event_data, db):
     logger.info(
         f"Credits added: User {user.id} credited with {purchase.credits} credits. "
         f"Balance: {previous_credits} -> {user.credits_remaining}"
-    ) 
+    )
+
+async def process_failed_payment(event_data, db):
+    """Process a payment.failed event"""
+    payment_data = event_data.get("data", {})
+    payment_id = payment_data.get("payment_id")
+    
+    if not payment_id:
+        logger.error("Missing payment_id in payment.failed event")
+        return
+    
+    # Find the purchase record
+    stmt = select(CreditPurchase).where(CreditPurchase.payment_id == payment_id)
+    purchase = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not purchase:
+        logger.error(f"No purchase record found for payment_id: {payment_id}")
+        return
+    
+    # Idempotency check - only process if not already marked as failed
+    if purchase.status == "failed":
+        logger.info(f"Payment already marked as failed: {payment_id}")
+        return
+    
+    # Update purchase status
+    purchase.status = "failed"
+    await db.commit()
+    
+    logger.info(f"Payment failed: purchase_id={purchase.id}, payment_id={payment_id}")
+
+async def process_expired_payment(event_data, db):
+    """Process a payment.expired event"""
+    payment_data = event_data.get("data", {})
+    payment_id = payment_data.get("payment_id")
+    
+    if not payment_id:
+        logger.error("Missing payment_id in payment.expired event")
+        return
+    
+    # Find the purchase record
+    stmt = select(CreditPurchase).where(CreditPurchase.payment_id == payment_id)
+    purchase = (await db.execute(stmt)).scalar_one_or_none()
+    
+    if not purchase:
+        logger.error(f"No purchase record found for payment_id: {payment_id}")
+        return
+    
+    # Idempotency check - only process if not already marked as expired
+    if purchase.status == "expired":
+        logger.info(f"Payment already marked as expired: {payment_id}")
+        return
+    
+    # Update purchase status
+    purchase.status = "expired"
+    await db.commit()
+    
+    logger.info(f"Payment expired: purchase_id={purchase.id}, payment_id={payment_id}") 

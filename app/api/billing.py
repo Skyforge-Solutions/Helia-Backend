@@ -29,16 +29,16 @@ router = APIRouter()
 # These should match the products created in your Dodo Payments dashboard
 CREDIT_PLANS = [
     CreditPlan(
-        id="prod_xyz123",  # Replace with your actual product ID from Dodo
+        id="pdt_RGfyUv4Fg7BRfqWsIpPjN",  # Replace with your actual product ID from Dodo
         name="100 Credits",
-        price=999,  # Price in cents/paise
+        price=500,  # Price in cents/paise
         credits=100,
         description="Basic package with 100 credits for chat interactions",
     ),
     CreditPlan(
-        id="prod_xyz456",  # Replace with your actual product ID from Dodo
+        id="pdt_n5TReSvCC0x4GWsglIO6l",  # Replace with your actual product ID from Dodo
         name="500 Credits",
-        price=3999,  # Price in cents/paise
+        price=1000,  # Price in cents/paise
         credits=500,
         description="Premium package with 500 credits for chat interactions",
     ),
@@ -90,6 +90,13 @@ async def create_checkout(
     try:
         # Create payment with Dodo
         payment_result = client.payments.create(
+            billing={
+                "city": "Default City",
+                "country": "IN",  # ISO country code
+                "state": "Default State",
+                "street": "123 Default Street",
+                "zipcode": "560001",
+            },
             product_cart=[{"product_id": request.product_id, "quantity": 1}],
             customer={"customer_id": current_user.id},
             metadata={"user_id": current_user.id, "credits": credits},
@@ -104,7 +111,7 @@ async def create_checkout(
             credits=credits,
             amount_cents=payment_result.total_amount,
             currency=payment_result.currency,
-            payment_id=payment_result.id,
+            payment_id=payment_result.payment_id,
             status="pending",
             product_id=request.product_id
         )
@@ -112,11 +119,11 @@ async def create_checkout(
         db.add(purchase)
         await db.commit()
         
-        logger.info(f"Created checkout for user {current_user.id}, payment ID: {payment_result.id}")
+        logger.info(f"Created checkout for user {current_user.id}, payment ID: {payment_result.payment_id}")
         
         return {
             "payment_link": payment_result.payment_link,
-            "payment_id": payment_result.id
+            "payment_id": payment_result.payment_id
         }
         
     except Exception as e:
