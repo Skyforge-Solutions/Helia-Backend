@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 try:
     client = DodoPayments(
         bearer_token=os.getenv("DODO_PAYMENTS_API_KEY"),
-        environment="test" if "test" in os.getenv("DODO_BASE_URL", "") else "live"
+        environment="test_mode" if "test" in os.getenv("DODO_BASE_URL", "") else "live_mode"
     )
-    logger.info(f"Dodo Payments client initialized in {'test' if 'test' in os.getenv('DODO_BASE_URL', '') else 'live'} mode")
+    logger.info(f"Dodo Payments client initialized in {'test_mode' if 'test' in os.getenv('DODO_BASE_URL', '') else 'live_mode'} mode")
 except Exception as e:
     logger.error(f"Failed to initialize Dodo Payments client: {str(e)}")
     raise
