@@ -72,11 +72,13 @@ def get_or_create_dodo_customer(user):
     except NotFoundError:
         # Customer doesn't exist, create one
         logger.info(f"Creating new Dodo customer for user: {user.id}")
-        return client.customers.create({
-            "customer_id": user.id,
-            "email": user.email,
-            "name": user.name or "HeliaChat User"
-        })
+        return client.customers.create(
+            body={
+                "customer_id": user.id,
+                "email": user.email,
+                "name": user.name or "HeliaChat User"
+            }
+        )
 
 @router.post("/create-checkout", response_model=CheckoutResponse, status_code=status.HTTP_201_CREATED, tags=["billing"])
 async def create_checkout(
