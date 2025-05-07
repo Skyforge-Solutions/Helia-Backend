@@ -1,6 +1,6 @@
 # app/schemas/models.py
-from pydantic import BaseModel, EmailStr, Field, SecretStr, validator
-from typing import List, Optional, Literal, Union, Dict, Any
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Optional, Literal
 from datetime import datetime
 
 # ----- AUTH: PASSWORD RELATED SCHEMAS -----
@@ -34,29 +34,6 @@ class EmailChangeRequestIn(BaseModel):
 class EmailChangeVerifyIn(BaseModel):
     """Schema for verifying an email change with OTP."""
     otp: str = Field(..., min_length=4, max_length=8, description="One-time password received via email")
-
-# DB Model Response Schemas
-class EmailChangeRequestSchema(BaseModel):
-    """Schema for the EmailChangeRequest database model."""
-    id: str = Field(..., description="Request unique identifier")
-    user_id: str = Field(..., description="User ID making the request")
-    new_email: EmailStr = Field(..., description="New email address requested")
-    expires_at: datetime = Field(..., description="When the OTP expires")
-    verified: bool = Field(False, description="Whether the email change has been verified")
-
-    class Config:
-        from_attributes = True
-
-class EmailVerificationRequestSchema(BaseModel):
-    """Schema for the EmailVerificationRequest database model."""
-    id: str = Field(..., description="Request unique identifier")
-    user_id: str = Field(..., description="User ID making the request")
-    email: EmailStr = Field(..., description="Email address to verify")
-    expires_at: datetime = Field(..., description="When the OTP expires")
-    verified: bool = Field(False, description="Whether the email has been verified")
-    
-    class Config:
-        from_attributes = True
 
 # ----- AUTH: TOKEN RELATED SCHEMAS -----
 
@@ -116,7 +93,7 @@ class UserLogin(UserBase):
 class UserSchema(UserBase):
     """Schema for user data returned from database."""
     id: str = Field(..., description="User's unique identifier")
-    password: str = Field(..., description="User's hashed password (used internally)")
+    password: str = Field(..., description="User's hashed password (used internally)", exclude=True)
     name: Optional[str] = Field(None, description="User's full name")
     age: Optional[str] = Field(None, description="User's age group")
     occupation: Optional[str] = Field(None, description="User's occupation")
