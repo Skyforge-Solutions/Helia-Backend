@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Callable, TypeVar, Any
 from uuid import uuid4
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -7,19 +7,60 @@ from app.db.models import User, ChatSession, ChatMessage, UsedPWResetToken, Refr
 from app.utils.password import get_password_hash, verify_password
 from app.db.models import EmailChangeRequest
 from datetime import datetime, timedelta, timezone
+import logging
 
+# Setup logging
+logger = logging.getLogger(__name__)
 
 OTP_TTL_MIN = 5
 
+# Generic type for return values
+T = TypeVar('T')
+
+async def safe_db_operation(session: AsyncSession, operation: Callable[..., T], *args, **kwargs) -> T:
+    """
+    Execute a database operation with proper transaction handling.
+    
+    Args:
+        session: The database session
+        operation: The function to execute
+        *args, **kwargs: Arguments to pass to the operation function
+        
+    Returns:
+        The result of the operation function
+        
+    Raises:
+        Exception: Re-raises any exception that occurs during the operation
+    """
+    try:
+        # Execute the operation
+        result = await operation(*args, **kwargs, session=session)
+        
+        # Commit if not already committed in the operation
+        if session.in_transaction():
+            await session.commit()
+            
+        return result
+    except Exception as e:
+        # Log the error
+        logger.error(f"Database operation failed: {str(e)}")
+        
+        # Rollback the transaction if active
+        if session.in_transaction():
+            await session.rollback()
+            
+        # Re-raise the exception
+        raise
+
 
 # ──────────────────────────  Chat sessions & messages  ──────────────────────
-async def get_or_create_session(
+async def _get_or_create_session_impl(
         user_id: str, 
         chat_id: str, 
         session: AsyncSession, 
         name: str = "New Chat"
     ) -> ChatSession:
-        """Get or create a chat session."""
+        """Implementation of get or create a chat session."""
         name = "New Chat" if not name else (name[:35] + "..." if len(name) > 35 else name)
         cs = await session.get(ChatSession, chat_id)
         if cs:
@@ -33,6 +74,15 @@ async def get_or_create_session(
         await session.commit()
         await session.refresh(cs)
         return cs
+
+async def get_or_create_session(
+        user_id: str, 
+        chat_id: str, 
+        session: AsyncSession, 
+        name: str = "New Chat"
+    ) -> ChatSession:
+        """Get or create a chat session with transaction safety."""
+        return await safe_db_operation(session, _get_or_create_session_impl, user_id, chat_id, name)
 
 async def list_sessions(
         user_id: str,
@@ -60,7 +110,7 @@ async def list_sessions(
             for r in rows
         ]
 
-async def add_message(
+async def _add_message_impl(
         chat_id: str, 
         role: str, 
         content: str, 
@@ -76,8 +126,17 @@ async def add_message(
             timestamp=datetime.now(timezone.utc),
         )
         session.add(msg)
-        await session.commit()
         return msg
+
+async def add_message(
+        chat_id: str, 
+        role: str, 
+        content: str, 
+        session: AsyncSession, 
+        image_url: str = None
+    ) -> ChatMessage:
+        return await safe_db_operation(session, _add_message_impl, 
+                                     chat_id, role, content, image_url)
 
 async def get_messages(
         chat_id: str,
@@ -102,7 +161,7 @@ async def get_chat_session_owned(
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
-async def update_session_name(
+async def _update_session_name_impl(
         chat_id: str, 
         name: str,
         session: AsyncSession,
@@ -113,11 +172,17 @@ async def update_session_name(
         
         cs.name = name
         cs.updated_at = func.now()
-        await session.commit()
         await session.refresh(cs)
         return cs
 
-async def delete_chat_session(
+async def update_session_name(
+        chat_id: str, 
+        name: str,
+        session: AsyncSession,
+    ) -> Optional[ChatSession]:
+        return await safe_db_operation(session, _update_session_name_impl, chat_id, name)
+
+async def _delete_chat_session_impl(
         chat_id: str,
         session: AsyncSession,
     ) -> bool:
@@ -130,8 +195,13 @@ async def delete_chat_session(
     chat_memory_store.pop(chat_id, None)
 
     await session.delete(cs)
-    await session.commit()
     return True
+
+async def delete_chat_session(
+        chat_id: str,
+        session: AsyncSession,
+    ) -> bool:
+    return await safe_db_operation(session, _delete_chat_session_impl, chat_id)
 
 async def get_chat_session(
         chat_id: str,
@@ -153,7 +223,7 @@ async def get_user_by_email(
         
         return (await session.execute(stmt)).scalar_one_or_none()
 
-async def create_user(
+async def _create_user_impl(
         email: str, 
         password: str, 
         session: AsyncSession, 
@@ -169,9 +239,15 @@ async def create_user(
             **profile,
         )
         session.add(user)
-        await session.commit()
-        await session.refresh(user)
         return user
+
+async def create_user(
+        email: str, 
+        password: str, 
+        session: AsyncSession, 
+        profile: Optional[dict] = None
+    ) -> User:
+        return await safe_db_operation(session, _create_user_impl, email, password, profile)
 
 async def authenticate_user(
         email: str, 
@@ -354,6 +430,28 @@ async def revoke_refresh_token(
         tok.revoked = True
         await session.commit()
         return True
+
+async def _get_refresh_token_by_user_impl(
+        token: str,
+        user_id: str,
+        session: AsyncSession,
+    ) -> Optional[RefreshToken]:
+        """Get a refresh token by its value and user ID."""
+        stmt = select(RefreshToken).where(
+            RefreshToken.token == token,
+            RefreshToken.user_id == user_id,  # Add user ID check
+            RefreshToken.revoked == False,
+            RefreshToken.expires_at > datetime.now(timezone.utc)
+        )
+        return (await session.execute(stmt)).scalar_one_or_none()
+
+async def get_refresh_token_by_user(
+        token: str,
+        user_id: str,
+        session: AsyncSession,
+    ) -> Optional[RefreshToken]:
+        """Get a refresh token by token value and user ID with transaction safety."""
+        return await safe_db_operation(session, _get_refresh_token_by_user_impl, token, user_id)
 
 # ──────────────────────────  Reset-token helpers  ───────────────────────────
 

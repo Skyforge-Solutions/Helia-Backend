@@ -9,11 +9,12 @@ from sqlalchemy import (
     Boolean,
     UniqueConstraint,
     Index,
+    Integer,
 )
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
-Base = declarative_base()
+Base = declarative_base() 
 
 
 class User(Base):
@@ -32,6 +33,7 @@ class User(Base):
     children         = Column(JSON, nullable=True)  # list of dicts
     is_active        = Column(Boolean, default=False)
     is_verified      = Column(Boolean, default=False)
+    credits_remaining = Column(Integer, nullable=False, default=100)
 
     sessions = relationship(
         "ChatSession",
@@ -45,6 +47,14 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    
+    # Add relationship to credit purchases
+    credit_purchases = relationship(
+        "CreditPurchase",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    
     # Add table args with index
     __table_args__=(
         Index("idx_users_email_verified", "email", "is_verified"),
@@ -162,3 +172,24 @@ class EmailVerificationRequest(Base):
     verified = Column(Boolean, default=False)
     
     user = relationship("User")
+
+class CreditPurchase(Base):
+    __tablename__ = "credit_purchases"
+    
+    id = Column(String, primary_key=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    credits = Column(Integer, nullable=False)
+    amount_cents = Column(Integer, nullable=False)
+    currency = Column(String, nullable=False)
+    payment_id = Column(String, nullable=False, unique=True)
+    status = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationship back to user
+    user = relationship("User", back_populates="credit_purchases")
+    
+    __table_args__ = (
+        # Index for finding a user's purchases
+        Index("idx_credit_purchases_user", "user_id"),
+    )
