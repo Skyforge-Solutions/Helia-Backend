@@ -95,11 +95,11 @@ async def create_checkout(
                 "country": "IN",  # ISO country code
                 "state": "Default State",
                 "street": "123 Default Street",
-                "zipcode": "560001",
+                "zipcode": "560001",  # Already a string, keeping it consistent
             },
             product_cart=[{"product_id": request.product_id, "quantity": 1}],
             customer={"customer_id": current_user.id},
-            metadata={"user_id": current_user.id, "credits": credits},
+            metadata={"user_id": str(current_user.id), "credits": str(credits)},
             payment_link=True,
             return_url="https://heliachat.com/checkout-success"  # Customize your return URL
         )
