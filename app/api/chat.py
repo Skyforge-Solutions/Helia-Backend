@@ -1,6 +1,7 @@
 import asyncio
 from uuid import uuid4
 from typing import List, Optional
+import logging
 
 from fastapi import (
     APIRouter, 
@@ -8,7 +9,8 @@ from fastapi import (
     HTTPException,
     UploadFile, 
     File, 
-    Form
+    Form,
+    status
 )
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +36,9 @@ from app.db.crud import (
 from openai import BadRequestError
 from app.utils.content_filter import get_content_filter_response 
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 # ─── MAIN ENDPOINT ──────────────────────────────────────────────────────────────
@@ -51,6 +56,14 @@ async def send_chat(
     session = await get_chat_session(chat_id,db)
     if session and session.user_id != current_user.id:
         raise HTTPException(403, "Not authorized to access this chat")
+
+    # 1.5) Credit check - NEW CODE ------------------------------------------------
+    if current_user.credits_remaining <= 0:
+        logger.info(f"User {current_user.id} attempted to chat with no credits")
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="You have run out of credits. Please purchase more to continue chatting."
+        )
 
     # 2) Ensure chat session exists ----------------------------------------------
     await get_or_create_session(current_user.id, chat_id,db)
@@ -91,7 +104,7 @@ async def send_chat(
         "time_with_kids": current_user.time_with_kids,
         "children": current_user.children,
 }
-    print(f"User profile: {user_profile}")
+    logger.debug(f"User profile for chat {chat_id}: {user_profile}")
 
     # Update memory management
     from app.chains.base import touch_memory , manage_memory_size
@@ -101,13 +114,14 @@ async def send_chat(
     chain  = await get_chat_chain(chat_id, model_id, user_profile,db)
     memory = chat_memory_store.get(chat_id)
     if memory:
-        print(f'memory for chat {chat_id} found, messages: {len(memory.chat_memory.messages)}')
+        logger.debug(f'Memory for chat {chat_id} found, messages: {len(memory.chat_memory.messages)}')
     else:
-        print(f'memory for chat {chat_id} not found, creating new one')
+        logger.debug(f'Memory for chat {chat_id} not found, creating new one')
 
     # 6) SSE streaming back to client --------------------------------------------
     async def event_stream():
         collected: list[str] = []
+        success = False  # Track if we successfully generated a response
         history = memory.chat_memory.messages if memory else []
 
         try:
@@ -130,6 +144,15 @@ async def send_chat(
                 content=full,
                 session=db
             )
+            
+            # Mark as success since we reached this point
+            success = True
+            
+            # Deduct credit for successful response - NEW CODE
+            current_user.credits_remaining -= 1
+            await db.commit()
+            logger.info(f"Deducted 1 credit from user {current_user.id}, remaining: {current_user.credits_remaining}")
+            
             yield "event: end\ndata: END\n\n"
         except BadRequestError as e:
             if e.code == "content_filter":
@@ -146,10 +169,27 @@ async def send_chat(
                     content=response,
                     session=db
                 )
+                
+                # Mark as success since we did provide a response
+                success = True
+                
+                # Deduct credit for content filter response - NEW CODE
+                current_user.credits_remaining -= 1
+                await db.commit()
+                logger.info(f"Deducted 1 credit from user {current_user.id}, remaining: {current_user.credits_remaining}")
+                
                 yield "event: end\ndata: END\n\n"
             else:
                 # For other BadRequestErrors, re-raise the exception
                 raise e
+        except Exception as e:
+            # If we get any other exception, log it but don't deduct credits
+            logger.error(f"Error in chat stream for user {current_user.id}, chat {chat_id}: {str(e)}")
+            # We don't deduct credits for errors
+            if not success:
+                yield f"data: An error occurred: {str(e)}\n"
+                yield "event: error\ndata: ERROR\n\n"
+            raise
 
     return StreamingResponse(
         event_stream(),
