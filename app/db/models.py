@@ -23,14 +23,14 @@ class User(Base):
     id               = Column(String, primary_key=True, index=True)
     email            = Column(String, unique=True, index=True, nullable=False)
     password         = Column(String, nullable=False)
-    name             = Column(String, nullable=True)  # Changed from not null to nullable
+    name             = Column(String, nullable=True)
     age              = Column(String, nullable=True)
     occupation       = Column(String, nullable=True)
     tone_preference  = Column(String, nullable=True)
     tech_familiarity = Column(String, nullable=True)
     parent_type      = Column(String, nullable=True)
     time_with_kids   = Column(String, nullable=True)
-    children         = Column(JSON, nullable=True)  # list of dicts
+    children         = Column(JSON, nullable=True)
     is_active        = Column(Boolean, default=False)
     is_verified      = Column(Boolean, default=False)
     credits_remaining = Column(Integer, nullable=False, default=100)
@@ -41,21 +41,18 @@ class User(Base):
         cascade="all, delete-orphan",
     )
     
-    # Add relationship to refresh tokens
     refresh_tokens = relationship(
         "RefreshToken",
         back_populates="user",
         cascade="all, delete-orphan",
     )
     
-    # Add relationship to credit purchases
     credit_purchases = relationship(
         "CreditPurchase",
         back_populates="user",
         cascade="all, delete-orphan",
     )
     
-    # Add table args with index
     __table_args__=(
         Index("idx_users_email_verified", "email", "is_verified"),
     )
@@ -78,12 +75,11 @@ class ChatSession(Base):
     )
 
     __table_args__ = (
-        # composite covering index
         Index(
             "idx_chat_sessions_by_user_updated",
             "user_id",
             "updated_at",
-            postgresql_ops={"updated_at": "DESC"}   # keeps rows pre-sorted
+            postgresql_ops={"updated_at": "DESC"}
         ),
     )
 
@@ -93,7 +89,7 @@ class ChatMessage(Base):
 
     id        = Column(String, primary_key=True, index=True)
     chat_id   = Column(String, ForeignKey("chat_sessions.id"), nullable=False, index=True)
-    role      = Column(String, nullable=False)  # "user" or "assistant"
+    role      = Column(String, nullable=False)
     content   = Column(Text, nullable=False)
     image_url = Column(String, nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
@@ -104,9 +100,10 @@ class ChatMessage(Base):
         Index(
             "idx_chat_messages_by_chat_time",
             "chat_id",
-            "timestamp"          # ASC by default
+            "timestamp"
         ),
     )
+
 
 class EmailChangeRequest(Base):
     __tablename__ = "email_change_requests"
@@ -126,6 +123,7 @@ class EmailChangeRequest(Base):
     verified = Column(Boolean, default=False)
     user = relationship("User")
 
+
 class UsedPWResetToken(Base):
     __tablename__ = "used_pw_reset_tokens"
     jti = Column(String, primary_key=True)
@@ -142,11 +140,9 @@ class RefreshToken(Base):
     revoked = Column(Boolean, default=False)
     issued_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    # Relationship back to user
     user = relationship("User", back_populates="refresh_tokens")
 
     __table_args__ = (
-        # Index to efficiently query valid tokens
         Index(
             "idx_valid_refresh_tokens",
             "user_id",
@@ -184,12 +180,11 @@ class CreditPurchase(Base):
     payment_id = Column(String, nullable=False, unique=True)
     status = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    product_id = Column(Text, nullable=False)
     
-    # Relationship back to user
     user = relationship("User", back_populates="credit_purchases")
     
     __table_args__ = (
-        # Index for finding a user's purchases
         Index("idx_credit_purchases_user", "user_id"),
     )
