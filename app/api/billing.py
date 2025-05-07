@@ -8,6 +8,7 @@ from typing import List
 from uuid import uuid4
 import logging
 
+from dodopayments import NotFoundError
 from app.services.dodo_client import client, is_client_configured
 from app.utils.auth import get_current_user
 from app.db.session import get_db
@@ -61,6 +62,22 @@ async def get_credits(current_user: UserSchema = Depends(get_current_user)):
     """
     return {"credits_remaining": current_user.credits_remaining}
 
+def get_or_create_dodo_customer(user):
+    """
+    Helper function to get or create a Dodo customer.
+    Uses the correct retrieve() method and handles NotFoundError.
+    """
+    try:
+        return client.customers.retrieve(customer_id=user.id)
+    except NotFoundError:
+        # Customer doesn't exist, create one
+        logger.info(f"Creating new Dodo customer for user: {user.id}")
+        return client.customers.create(
+            customer_id=user.id,
+            email=user.email,
+            name=user.name or "HeliaChat User"
+        )
+
 @router.post("/create-checkout", response_model=CheckoutResponse, status_code=status.HTTP_201_CREATED, tags=["billing"])
 async def create_checkout(
     request: CreateCheckoutRequest,
@@ -88,23 +105,8 @@ async def create_checkout(
     credits = PRODUCT_CREDIT_MAP[request.product_id]
     
     try:
-        # First, check if customer exists in Dodo's system or create if not
-        try:
-            # Try to fetch the customer
-            dodo_customer = client.customers.get(customer_id=current_user.id)
-            logger.info(f"Found existing Dodo customer: {current_user.id}")
-        except Exception as e:
-            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
-                # Customer doesn't exist, create one
-                logger.info(f"Creating new Dodo customer for user: {current_user.id}")
-                dodo_customer = client.customers.create(
-                    customer_id=current_user.id,
-                    email=current_user.email,
-                    name=current_user.name or "HeliaChat User"
-                )
-            else:
-                # Some other error occurred
-                raise e
+        # First, ensure customer exists in Dodo's system
+        dodo_customer = get_or_create_dodo_customer(current_user)
         
         # Create payment with Dodo
         payment_result = client.payments.create(
