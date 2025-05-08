@@ -2,7 +2,7 @@
 Payment-related Pydantic schemas for request and response validation.
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 
 class CreditPlan(BaseModel):

@@ -51,7 +51,7 @@ def trim_chat_memory(memory):
         memory.chat_memory.messages = memory.chat_memory.messages[excess:]
         logger.info(f"Trimmed memory to {MAX_MESSAGES_PER_CHAT} messages (removed {excess})")
 
-async def get_chat_chain(chat_id: str, model_id: str, user_profile: dict, db: AsyncSession) -> Runnable:
+async def get_chat_chain(chat_id: str, model_id: str, user_profile: dict, session: AsyncSession) -> Runnable:
     # System prompt setup (existing code)
     system = get_system_prompt(model_id)
     
@@ -100,7 +100,7 @@ async def get_chat_chain(chat_id: str, model_id: str, user_profile: dict, db: As
         MEMORY_LAST_ACCESSED[chat_id] = time.time()
         
         # Load from DB with injected session
-        msgs = await get_messages(chat_id, db)
+        msgs = await get_messages(chat_id, session)
         logger.info(f"Loaded {len(msgs)} messages from DB for chat {chat_id}")
         
         # If too many messages in history, only load the most recent ones

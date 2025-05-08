@@ -53,7 +53,7 @@ async def send_chat(
 ):
 
     # 1) ownership check + lazy creation ------------------------------------------------
-    session = await get_chat_session(chat_id,db)
+    session = await get_chat_session(chat_id, session=db)
     if session and session.user_id != current_user.id:
         raise HTTPException(403, "Not authorized to access this chat")
 
@@ -66,7 +66,7 @@ async def send_chat(
         )
 
     # 2) Ensure chat session exists ----------------------------------------------
-    await get_or_create_session(current_user.id, chat_id,db)
+    await get_or_create_session(current_user.id, chat_id, session=db)
 
     # 3) Handle optional image upload --------------------------------------------
     image_url: Optional[str] = None
@@ -111,7 +111,7 @@ async def send_chat(
     touch_memory(chat_id)
     manage_memory_size()
 
-    chain  = await get_chat_chain(chat_id, model_id, user_profile,db)
+    chain  = await get_chat_chain(chat_id, model_id, user_profile, session=db)
     memory = chat_memory_store.get(chat_id)
     if memory:
         logger.debug(f'Memory for chat {chat_id} found, messages: {len(memory.chat_memory.messages)}')
@@ -210,7 +210,7 @@ async def get_sessions(
     current_user: UserSchema = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await list_sessions(current_user.id,db)
+    return await list_sessions(current_user.id, session=db)
 
 @router.post("/sessions", response_model=ChatSessionSchema,status_code=201)
 async def create_session(
@@ -234,9 +234,9 @@ async def rename_session(
     db: AsyncSession = Depends(get_db),
 ):
     # Check ownership
-    if not await get_chat_session_owned(chat_id, current_user.id, db):
+    if not await get_chat_session_owned(chat_id, current_user.id, session=db):
         raise HTTPException(404, "Chat session not found")
-    return await update_session_name(chat_id, name, db)
+    return await update_session_name(chat_id, name, session=db)
 
 @router.delete("/sessions/{chat_id}", response_model=dict)
 async def delete_session(
@@ -245,9 +245,9 @@ async def delete_session(
     db: AsyncSession = Depends(get_db),
     ):
     # Check ownership
-    if not await get_chat_session_owned(chat_id, current_user.id, db):
+    if not await get_chat_session_owned(chat_id, current_user.id, session=db):
         raise HTTPException(404, "Chat session not found")
-    await delete_chat_session(chat_id, db)
+    await delete_chat_session(chat_id, session=db)
     return {"status": "success", "message": "Chat session deleted"}
 
 @router.get("/sessions/{chat_id}", response_model=ChatSessionSchema)
@@ -256,7 +256,7 @@ async def get_session(
     current_user: UserSchema = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    session_obj = await get_chat_session_owned(chat_id, current_user.id, db)
+    session_obj = await get_chat_session_owned(chat_id, current_user.id, session=db)
     if not session_obj:
         raise HTTPException(404, "Chat session not found")
     return session_obj
@@ -268,10 +268,10 @@ async def get_history(
     db: AsyncSession = Depends(get_db),
 ):
     # Check ownership
-    session_obj = await get_chat_session_owned(chat_id, current_user.id, db)
+    session_obj = await get_chat_session_owned(chat_id, current_user.id, session=db)
     if not session_obj:
         raise HTTPException(404, "Chat session not found")
-    return await get_messages(chat_id, db)
+    return await get_messages(chat_id, session=db)
 
 @router.put("/users/me", response_model=UserSchema)
 async def update_my_profile(
@@ -281,7 +281,7 @@ async def update_my_profile(
 ):
     # Update the current user's profile
     profile_dict = profile_data.model_dump(exclude_unset=True)
-    return await update_user_profile(current_user.id, profile_dict, db)
+    return await update_user_profile(current_user.id, profile_dict, session=db)
 
 @router.get("/users/me", response_model=UserSchema)
 async def get_my_profile(current_user: UserSchema = Depends(get_current_user)):

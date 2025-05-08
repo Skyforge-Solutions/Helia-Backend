@@ -17,14 +17,15 @@ OTP_TTL_MIN = 5
 # Generic type for return values
 T = TypeVar('T')
 
-async def safe_db_operation(session: AsyncSession, operation: Callable[..., T], *args, **kwargs) -> T:
+async def safe_db_operation(operation: Callable[..., T], *args, session: AsyncSession, **kwargs) -> T:
     """
     Execute a database operation with proper transaction handling.
     
     Args:
-        session: The database session
         operation: The function to execute
-        *args, **kwargs: Arguments to pass to the operation function
+        *args: Positional arguments to pass to the operation function
+        session: The database session
+        **kwargs: Keyword arguments to pass to the operation function
         
     Returns:
         The result of the operation function
@@ -34,7 +35,7 @@ async def safe_db_operation(session: AsyncSession, operation: Callable[..., T], 
     """
     try:
         # Execute the operation
-        result = await operation(*args, **kwargs, session=session)
+        result = await operation(*args, session=session, **kwargs)
         
         # Commit if not already committed in the operation
         if session.in_transaction():
@@ -57,8 +58,8 @@ async def safe_db_operation(session: AsyncSession, operation: Callable[..., T], 
 async def _get_or_create_session_impl(
         user_id: str, 
         chat_id: str, 
-        session: AsyncSession, 
-        name: str = "New Chat"
+        name: str = "New Chat",
+        session: AsyncSession = None
     ) -> ChatSession:
         """Implementation of get or create a chat session."""
         name = "New Chat" if not name else (name[:35] + "..." if len(name) > 35 else name)
@@ -82,7 +83,13 @@ async def get_or_create_session(
         name: str = "New Chat"
     ) -> ChatSession:
         """Get or create a chat session with transaction safety."""
-        return await safe_db_operation(session, _get_or_create_session_impl, user_id, chat_id, name)
+        return await safe_db_operation(
+            _get_or_create_session_impl, 
+            user_id, 
+            chat_id, 
+            name, 
+            session=session
+        )
 
 async def list_sessions(
         user_id: str,
@@ -114,8 +121,8 @@ async def _add_message_impl(
         chat_id: str, 
         role: str, 
         content: str, 
-        session: AsyncSession, 
-        image_url: str = None
+        image_url: str = None,
+        session: AsyncSession = None
     ) -> ChatMessage:
         msg = ChatMessage(
             id=str(uuid4()),
@@ -135,8 +142,14 @@ async def add_message(
         session: AsyncSession, 
         image_url: str = None
     ) -> ChatMessage:
-        return await safe_db_operation(session, _add_message_impl, 
-                                     chat_id, role, content, image_url)
+        return await safe_db_operation(
+            _add_message_impl, 
+            chat_id, 
+            role, 
+            content, 
+            image_url,
+            session=session
+        )
 
 async def get_messages(
         chat_id: str,
@@ -164,7 +177,7 @@ async def get_chat_session_owned(
 async def _update_session_name_impl(
         chat_id: str, 
         name: str,
-        session: AsyncSession,
+        session: AsyncSession = None
     ) -> Optional[ChatSession]:
         cs = await session.get(ChatSession, chat_id)
         if not cs:
@@ -180,11 +193,16 @@ async def update_session_name(
         name: str,
         session: AsyncSession,
     ) -> Optional[ChatSession]:
-        return await safe_db_operation(session, _update_session_name_impl, chat_id, name)
+        return await safe_db_operation(
+            _update_session_name_impl, 
+            chat_id, 
+            name, 
+            session=session
+        )
 
 async def _delete_chat_session_impl(
         chat_id: str,
-        session: AsyncSession,
+        session: AsyncSession = None
     ) -> bool:
     cs = await session.get(ChatSession, chat_id)
     if not cs:
@@ -201,7 +219,11 @@ async def delete_chat_session(
         chat_id: str,
         session: AsyncSession,
     ) -> bool:
-    return await safe_db_operation(session, _delete_chat_session_impl, chat_id)
+    return await safe_db_operation(
+        _delete_chat_session_impl, 
+        chat_id, 
+        session=session
+    )
 
 async def get_chat_session(
         chat_id: str,
@@ -226,8 +248,8 @@ async def get_user_by_email(
 async def _create_user_impl(
         email: str, 
         password: str, 
-        session: AsyncSession, 
-        profile: Optional[dict] = None
+        profile: Optional[dict] = None,
+        session: AsyncSession = None
     ) -> User:
         profile = profile.copy() if profile else {}
         profile.pop("email", None)
@@ -247,7 +269,13 @@ async def create_user(
         session: AsyncSession, 
         profile: Optional[dict] = None
     ) -> User:
-        return await safe_db_operation(session, _create_user_impl, email, password, profile)
+        return await safe_db_operation(
+            _create_user_impl, 
+            email, 
+            password, 
+            profile, 
+            session=session
+        )
 
 async def authenticate_user(
         email: str, 
@@ -434,7 +462,7 @@ async def revoke_refresh_token(
 async def _get_refresh_token_by_user_impl(
         token: str,
         user_id: str,
-        session: AsyncSession,
+        session: AsyncSession = None
     ) -> Optional[RefreshToken]:
         """Get a refresh token by its value and user ID."""
         stmt = select(RefreshToken).where(
@@ -450,8 +478,12 @@ async def get_refresh_token_by_user(
         user_id: str,
         session: AsyncSession,
     ) -> Optional[RefreshToken]:
-        """Get a refresh token by token value and user ID with transaction safety."""
-        return await safe_db_operation(session, _get_refresh_token_by_user_impl, token, user_id)
+        return await safe_db_operation(
+            _get_refresh_token_by_user_impl, 
+            token, 
+            user_id, 
+            session=session
+        )
 
 # ──────────────────────────  Reset-token helpers  ───────────────────────────
 
