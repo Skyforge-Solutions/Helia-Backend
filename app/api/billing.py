@@ -204,7 +204,7 @@ async def create_checkout(
             customer={"customer_id": user_model.dodo_customer_id},
             metadata={"user_id": str(user_model.id), "credits": str(credits)},
             payment_link=True,
-            return_url="https://heliachat.com/checkout-success"
+            return_url="https://helia-chat.vercel.app/login"
         )
         
         # For debugging - uncomment if needed to see available fields
