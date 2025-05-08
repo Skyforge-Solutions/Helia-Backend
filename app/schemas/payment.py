@@ -2,7 +2,7 @@
 Payment-related Pydantic schemas for request and response validation.
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 class CreditPlan(BaseModel):
@@ -39,3 +39,51 @@ class CreditPurchaseResponse(BaseModel):
     
     class Config:
         from_attributes = True 
+
+class BillingAddress(BaseModel):
+    """Schema for billing address information."""
+    city: str = Field(..., description="City name")
+    country: str = Field(..., description="Country code (ISO alpha-2)")
+    state: str = Field(..., description="State or province")
+    street: str = Field(..., description="Street address")
+    zipcode: str = Field(..., description="Postal or ZIP code")
+
+class CustomerDetails(BaseModel):
+    """Schema for customer details."""
+    customer_id: str = Field(..., description="Unique identifier for the customer")
+    email: str = Field(..., description="Email address of the customer")
+    name: str = Field(..., description="Name of the customer")
+
+class RefundInfo(BaseModel):
+    """Schema for refund information."""
+    refund_id: str = Field(..., description="Unique identifier for the refund")
+    amount: int = Field(..., description="Refunded amount")
+    currency: str = Field(..., description="Currency code (ISO)")
+    status: str = Field(..., description="Status of the refund")
+    created_at: datetime = Field(..., description="When the refund was created")
+    payment_id: str = Field(..., description="ID of the payment that was refunded")
+    business_id: str = Field(..., description="ID of the business")
+    reason: Optional[str] = Field(None, description="Reason for refund")
+
+class PaymentDetailResponse(BaseModel):
+    """Schema for payment details response."""
+    payment_id: str = Field(..., description="Unique identifier for the payment")
+    business_id: str = Field(..., description="ID of the business")
+    total_amount: int = Field(..., description="Total amount in smallest currency unit")
+    currency: str = Field(..., description="Currency code (ISO)")
+    status: str = Field(..., description="Payment status")
+    created_at: datetime = Field(..., description="When the payment was created")
+    updated_at: Optional[datetime] = Field(None, description="When the payment was last updated")
+    customer: CustomerDetails = Field(..., description="Customer information")
+    billing: BillingAddress = Field(..., description="Billing address information")
+    payment_method: Optional[str] = Field(None, description="Payment method used")
+    payment_method_type: Optional[str] = Field(None, description="Specific type of payment method")
+    refunds: List[RefundInfo] = Field(default_factory=list, description="List of refunds")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    settlement_amount: int = Field(..., description="Settlement amount")
+    settlement_currency: str = Field(..., description="Settlement currency code")
+    tax: Optional[int] = Field(None, description="Tax amount in smallest currency unit")
+
+class InvoiceResponse(BaseModel):
+    """Schema for invoice response."""
+    invoice_url: str = Field(..., description="URL to download the invoice PDF") 

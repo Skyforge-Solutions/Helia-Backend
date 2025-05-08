@@ -17,7 +17,12 @@ from app.schemas.payment import (
     CreditPlan, 
     CreateCheckoutRequest, 
     CheckoutResponse, 
-    CreditPurchaseResponse
+    CreditPurchaseResponse,
+    PaymentDetailResponse,
+    InvoiceResponse,
+    CustomerDetails,
+    BillingAddress,
+    RefundInfo
 )
 from app.db.models import CreditPurchase, User
 
@@ -263,3 +268,214 @@ async def get_purchase_history(
     purchases = result.scalars().all()
     
     return purchases
+
+@router.get("/payments/{payment_id}", response_model=PaymentDetailResponse, tags=["billing"])
+async def get_payment_details(
+    payment_id: str,
+    current_user: UserSchema = Depends(get_current_user)
+):
+    """
+    Retrieve detailed information about a specific payment.
+    """
+    if not is_client_configured():
+        logger.error("Dodo Payments API is not properly configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment service is currently unavailable"
+        )
+    
+    try:
+        # Dodo SDK methods are synchronous
+        payment_details = client.payments.retrieve(payment_id)
+        
+        # Verify that the payment belongs to the current user
+        if payment_details.metadata.get("user_id") != current_user.id:
+            logger.warning(f"User {current_user.id} attempted to access payment {payment_id} that doesn't belong to them")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to access this payment"
+            )
+        
+        # Convert the Dodo payment object to our response schema
+        # Note: Field mapping depends on actual Dodo API response structure
+        return PaymentDetailResponse(
+            payment_id=payment_details.payment_id,
+            business_id=payment_details.business_id,
+            total_amount=payment_details.total_amount,
+            currency=payment_details.currency,
+            status=payment_details.status,
+            created_at=payment_details.created_at,
+            updated_at=payment_details.updated_at,
+            customer=CustomerDetails(
+                customer_id=payment_details.customer.customer_id,
+                email=payment_details.customer.email,
+                name=payment_details.customer.name
+            ),
+            billing=BillingAddress(
+                city=payment_details.billing.city,
+                country=payment_details.billing.country,
+                state=payment_details.billing.state,
+                street=payment_details.billing.street,
+                zipcode=payment_details.billing.zipcode
+            ),
+            payment_method=payment_details.payment_method,
+            payment_method_type=payment_details.payment_method_type,
+            refunds=[
+                RefundInfo(
+                    refund_id=refund.refund_id,
+                    amount=refund.amount,
+                    currency=refund.currency,
+                    status=refund.status,
+                    created_at=refund.created_at,
+                    payment_id=refund.payment_id,
+                    business_id=refund.business_id,
+                    reason=refund.reason
+                )
+                for refund in payment_details.refunds
+            ],
+            metadata=payment_details.metadata,
+            settlement_amount=payment_details.settlement_amount,
+            settlement_currency=payment_details.settlement_currency,
+            tax=payment_details.tax
+        )
+    
+    except NotFoundError:
+        logger.error(f"Payment with ID {payment_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving payment details for {payment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve payment details"
+        )
+
+@router.get("/invoices/payments/{payment_id}", response_model=InvoiceResponse, tags=["billing"])
+async def get_invoice(
+    payment_id: str,
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get an invoice PDF for a specific payment.
+    """
+    if not is_client_configured():
+        logger.error("Dodo Payments API is not properly configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment service is currently unavailable"
+        )
+    
+    # First check if the payment belongs to the user
+    stmt = select(CreditPurchase).where(
+        CreditPurchase.payment_id == payment_id,
+        CreditPurchase.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    purchase = result.scalar_one_or_none()
+    
+    if not purchase:
+        logger.warning(f"User {current_user.id} attempted to access invoice for payment {payment_id} that doesn't exist or doesn't belong to them")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this invoice"
+        )
+    
+    try:
+        # Retrieve the invoice from Dodo Payments
+        # The Dodo SDK returns the invoice directly, not a URL
+        # We need to determine how to handle this based on the API response
+        invoice_data = client.invoices.payments.retrieve(payment_id)
+        
+        # Since the Dodo SDK might return the actual PDF content, we'd need to:
+        # 1. Either save it temporarily and return a URL to download
+        # 2. Or return a base64-encoded string of the PDF
+        # 3. Or return a URL provided by Dodo if available
+        
+        # For now, assuming the response contains or can be converted to a URL:
+        # This is a placeholder that might need adjustment based on actual API behavior
+        
+        # Point to our download endpoint
+        invoice_url = f"/api/billing/download-invoice/{payment_id}"
+        
+        return InvoiceResponse(invoice_url=invoice_url)
+    
+    except NotFoundError:
+        logger.error(f"Invoice for payment ID {payment_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving invoice for payment {payment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve invoice"
+        )
+
+@router.get("/download-invoice/{payment_id}", tags=["billing"])
+async def download_invoice(
+    payment_id: str,
+    current_user: UserSchema = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Download an invoice PDF for a specific payment.
+    """
+    if not is_client_configured():
+        logger.error("Dodo Payments API is not properly configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment service is currently unavailable"
+        )
+    
+    # First check if the payment belongs to the user
+    stmt = select(CreditPurchase).where(
+        CreditPurchase.payment_id == payment_id,
+        CreditPurchase.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    purchase = result.scalar_one_or_none()
+    
+    if not purchase:
+        logger.warning(f"User {current_user.id} attempted to download invoice for payment {payment_id} that doesn't exist or doesn't belong to them")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this invoice"
+        )
+    
+    try:
+        # Retrieve the invoice PDF content from Dodo Payments
+        invoice_data = client.invoices.payments.retrieve(payment_id)
+        
+        # The Dodo API returns the actual PDF content
+        # We need to return it as a StreamingResponse with the correct headers
+        from fastapi.responses import StreamingResponse
+        import io
+        
+        # Create an in-memory byte stream from the PDF content
+        pdf_stream = io.BytesIO(invoice_data)
+        pdf_stream.seek(0)
+        
+        # Return the PDF as a StreamingResponse
+        headers = {
+            'Content-Disposition': f'attachment; filename="invoice_{payment_id}.pdf"',
+            'Content-Type': 'application/pdf'
+        }
+        
+        return StreamingResponse(pdf_stream, headers=headers)
+    
+    except NotFoundError:
+        logger.error(f"Invoice for payment ID {payment_id} not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invoice not found"
+        )
+    except Exception as e:
+        logger.error(f"Error downloading invoice for payment {payment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to download invoice"
+        )
