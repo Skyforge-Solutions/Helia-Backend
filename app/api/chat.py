@@ -148,9 +148,14 @@ async def send_chat(
             # Mark as success since we reached this point
             success = True
             
-            # Deduct credit for successful response - NEW CODE
+            # Deduct credit for successful response
             current_user.credits_remaining -= 1
-            await db.commit()
+            # Update user in database to ensure credits change is persisted
+            await update_user_profile(
+                current_user.id, 
+                {"credits_remaining": current_user.credits_remaining}, 
+                session=db
+            )
             logger.info(f"Deducted 1 credit from user {current_user.id}, remaining: {current_user.credits_remaining}")
             
             yield "event: end\ndata: END\n\n"
@@ -173,9 +178,14 @@ async def send_chat(
                 # Mark as success since we did provide a response
                 success = True
                 
-                # Deduct credit for content filter response - NEW CODE
+                # Deduct credit for content filter response
                 current_user.credits_remaining -= 1
-                await db.commit()
+                # Update user in database to ensure credits change is persisted
+                await update_user_profile(
+                    current_user.id, 
+                    {"credits_remaining": current_user.credits_remaining}, 
+                    session=db
+                )
                 logger.info(f"Deducted 1 credit from user {current_user.id}, remaining: {current_user.credits_remaining}")
                 
                 yield "event: end\ndata: END\n\n"
